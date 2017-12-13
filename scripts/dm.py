@@ -21,7 +21,7 @@ import healpy as hp
 import mwdust
 
 import imp
-triangle = imp.load_source('triangle', '/home/ana/projects/python/triangle.py/triangle.py')
+triangle = imp.load_source('triangle', '../../python/triangle.py/triangle.py')
 
 import myutils
 import multiprocessing
