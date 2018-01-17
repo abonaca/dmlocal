@@ -32,12 +32,15 @@ import time
 import warnings
 warnings.filterwarnings('ignore')
 
+from os.path import expanduser
+home = expanduser('~')
+
 speclabels = ['O', 'B', 'A', 'F', 'G', 'K', 'M']
 logglabels = {0: 'dwarfs', 1: 'giants'}
 
 class Sample():
     def __init__(self, name='distances_PJM2017.csv', crtheta=90, vdisk=220*u.km/u.s, sdisk=180*u.km/u.s, label='McMillan'):
-        self.data = Table.read('/home/ana/data/gaia/{}'.format(name))
+        self.data = Table.read('{}/data/gaia/{}'.format(home, name))
         self.MJ = self.data['Jmag_2MASS'] - 5*np.log10(self.data['distance']) + 5
         self.JH = self.data['Jmag_2MASS'] - self.data['Hmag_2MASS']
         self.JK = self.data['Jmag_2MASS'] - self.data['Kmag_2MASS']
@@ -874,7 +877,82 @@ def vz_xd(signed=False, dz=0.04, full=False, test=False):
         else:
             plt.savefig('../plots/vz_xd{}_logg{}_teff{}_z{}_s{:1d}.png'.format(ncomp, logg_id[i], teff[i], l, signed))
 
-def vzvr_xd(test=True, dz=0.04, signed=False, off=0):
+def vzvr_gradient(test=True, dz=0.04, signed=True, ncomp=10, seed=587):
+    """"""
+    
+    s = Sample()
+    np.random.seed(seed)
+    
+    # population bins
+    logg = [s.dwarf, s.dwarf, s.dwarf, s.giant, s.giant]
+    logg_id = [0, 0, 0, 1, 1]
+    teff = [2, 3, 4, 5, 6]
+    Npop = len(teff)
+    
+    # radial bins
+    R = 0.2*u.kpc
+    x0 = np.array([-8.3 + x*R.value for x in [-4,-2,0,2,4]])*u.kpc
+    y0 = 0*u.kpc
+    Nrbin = np.size(x0)
+    
+    # z bins
+    if signed:
+        z_bins = np.arange(-4, 4+dz, dz)
+    else:
+        z_bins = np.arange(0, 4+dz, dz)
+        s.x[:,2] = np.abs(s.x[:,2])
+    z = myutils.bincen(z_bins)
+    Nb = np.size(z)
+    
+    if test:
+        Npop = 1
+    
+    for i in range(Npop):
+        for j in range(Nrbin):
+            spatial = ((s.x[:,0]-x0[j])**2 + (s.x[:,1]-y0)**2<R**2)
+            selection = spatial & logg[i] & s.spectype[teff[i]] & (s.verr[:,2]<20)
+            
+            hz, be = np.histogram(s.x[:,2][selection].value, bins=z_bins, weights=s.cf[selection])
+            nz, be = np.histogram(s.x[:,2][selection].value, bins=z_bins)
+            idx  = np.digitize(s.x[:,2][selection].value, bins=z_bins)
+        
+            alpha = np.ones((Nb, ncomp)) * np.nan
+            mu = np.ones((Nb, ncomp)) * np.nan
+            var = np.ones((Nb, ncomp)) * np.nan
+        
+            for l in range(Nb):
+                if np.sum(idx==l+1)>ncomp:
+                    vz = np.array([s.v[:,2][selection][idx==l+1].value]).T
+                    vze = s.verr[:,2][selection][idx==l+1][:,np.newaxis, np.newaxis]
+                
+                    vx = np.array([s.v[:,0][selection][idx==l+1].value]).T
+                    vy = np.array([s.v[:,1][selection][idx==l+1].value]).T
+                    vr = np.sqrt(vx**2 + vy**2) * np.sign(vx)
+                
+                    vxe = s.verr[:,0][selection][idx==l+1]
+                    vye = s.verr[:,1][selection][idx==l+1]
+                    vre = np.sqrt((vx[:,0]*vxe/vr[:,0])**2 + (vy[:,0]*vye/vr[:,0])**2)[:,np.newaxis, np.newaxis]
+                
+                    vrz = vr*vz
+                    vrze = np.sqrt((vr[:,0]*vze[:,0,0])**2 + (vz[:,0]*vre[:,0,0])**2)[:,np.newaxis, np.newaxis]
+                
+                    med = np.median(vr*vz)
+                    print(i, l, med*2/8.3)
+                
+                    clf = XDGMM(ncomp, n_iter=100)
+                    clf.fit(vrz, vrze)
+                
+                    mu[l] = clf.mu[:,0]
+                    var[l] = clf.V[:,0,0]
+                    alpha[l] = clf.alpha
+                
+                    med = np.sum(mu[l] * alpha[l])
+                    print(i, l, med*2/8.3)
+        
+            np.savez('../data/vrz_xd{}_logg{}_teff{}_x0{:.1f}_z{}_s{:1d}'.format(ncomp, logg_id[i], teff[i], x0[j], l, signed), mu=mu, var=var, alpha=alpha)
+        
+
+def vzvr_xd(test=True, dz=0.04, signed=False):
     """Extreme deconvolution of VzVR velocities"""
     
     s = Sample()
