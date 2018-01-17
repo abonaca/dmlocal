@@ -874,7 +874,7 @@ def vz_xd(signed=False, dz=0.04, full=False, test=False):
         else:
             plt.savefig('../plots/vz_xd{}_logg{}_teff{}_z{}_s{:1d}.png'.format(ncomp, logg_id[i], teff[i], l, signed))
 
-def vzvr_xd(test=True, dz=0.04, signed=False, off=0):
+def vzvr_xd(test=True, dz=0.04, signed=False, off=0, ncomp=10):
     """Extreme deconvolution of VzVR velocities"""
     
     s = Sample()
@@ -891,21 +891,21 @@ def vzvr_xd(test=True, dz=0.04, signed=False, off=0):
     Ncol = np.int(np.ceil(Nb/Nrow))
     d = 5
     
-    logg = [s.dwarf, s.dwarf, s.dwarf, s.giant, s.giant]
-    logg_id = [0, 0, 0, 1, 1]
-    teff = [2, 3, 4, 5, 6]
+    logg = [s.giant, s.dwarf, s.dwarf, s.dwarf, s.giant, s.giant]
+    logg_id = [1, 0, 0, 0, 1, 1]
+    teff = [6, 2, 3, 4, 5, 6]
     Npop = len(teff)
     
     if test:
         Npop = 1
         #Nb = 1
     
-    ncomp = 10
     np.random.seed(4091)
     
     for i in range(Npop):
         plt.close()
-        fig, ax = plt.subplots(Nrow,Ncol, figsize=(Ncol*d, Nrow*d), sharex=True, squeeze=False)
+        #fig, ax = plt.subplots(Nrow,Ncol, figsize=(Ncol*d, Nrow*d), sharex=True, squeeze=False)
+        plt.figure(figsize=(8,6))
     
         selection = logg[i] & s.spectype[teff[i]] & (s.verr[:,2]<20)
         hz, be = np.histogram(s.x[:,2][selection].value, bins=z_bins, weights=s.cf[selection])
@@ -916,41 +916,58 @@ def vzvr_xd(test=True, dz=0.04, signed=False, off=0):
         mu = np.ones((Nb, ncomp)) * np.nan
         var = np.ones((Nb, ncomp)) * np.nan
         
+        mvr = np.ones(Nb) * np.nan
+        mvz = np.ones(Nb) * np.nan
+        mvrz = np.ones(Nb) * np.nan
+        svrz = np.ones(Nb) * np.nan
+        
         for l in range(Nb):
             if np.sum(idx==l+1)>ncomp:
                 vz = np.array([s.v[:,2][selection][idx==l+1].value]).T
                 vze = s.verr[:,2][selection][idx==l+1][:,np.newaxis, np.newaxis]
                 
-                vx = np.array([s.v[:,0][selection][idx==l+1].value]).T
-                vy = np.array([s.v[:,1][selection][idx==l+1].value]).T
-                vr = np.sqrt(vx**2 + vy**2) * np.sign(vx)
+                vx = np.array([s.v[:,0][selection][idx==l+1].value])
+                vy = np.array([s.v[:,1][selection][idx==l+1].value])
+                thx = np.arctan2(s.x[:,1][selection][idx==l+1].value, s.x[:,0][selection][idx==l+1].value)
+                thv = np.arctan2(s.v[:,1][selection][idx==l+1].value, s.v[:,0][selection][idx==l+1].value)
+                vr = (np.sqrt(vx**2 + vy**2) * np.cos(thx+thv)).T
                 
                 vxe = s.verr[:,0][selection][idx==l+1]
                 vye = s.verr[:,1][selection][idx==l+1]
                 vre = np.sqrt((vx[:,0]*vxe/vr[:,0])**2 + (vy[:,0]*vye/vr[:,0])**2)[:,np.newaxis, np.newaxis]
                 
+                #print(np.shape(vz), np.shape(vze), np.shape(vr), np.shape(vre))
+                
                 vrz = vr*vz
                 vrze = np.sqrt((vr[:,0]*vze[:,0,0])**2 + (vz[:,0]*vre[:,0,0])**2)[:,np.newaxis, np.newaxis]
+                #print(np.median(vr), np.median(vz), np.median(vrz))
                 
-                med = np.median(vr*vz)
-                print(i, l, med*2/8.3)
+                #med = np.median(vrz)
+                mvr[l] = np.median(vr)
+                mvz[l] = np.median(vz)
+                fsig = (vr-mvr)*(vz-mvz)
+                mvrz[l] = np.nanmean(fsig)
+                svrz[l] = np.nanstd(fsig)
+                svrz[l] = np.median(vr*vz)
+                #print(l, mvrz[l], svrz[l])
+                #print(i, l, med, np.std(vrz), np.median(vr), np.median(vz), mvrz, svrz)
                 
-                clf = XDGMM(ncomp, n_iter=100)
-                clf.fit(vrz, vrze)
+                #clf = XDGMM(ncomp, n_iter=100)
+                #clf.fit(vrz, vrze)
                 
-                mu[l] = clf.mu[:,0]
-                var[l] = clf.V[:,0,0]
-                alpha[l] = clf.alpha
+                #mu[l] = clf.mu[:,0]
+                #var[l] = clf.V[:,0,0]
+                #alpha[l] = clf.alpha
                 
-                med = np.sum(mu[l] * alpha[l])
-                print(i, l, med*2/8.3)
+                #med = np.sum(mu[l] * alpha[l])
+                #print(i, l, med*2/8.3)
+                
                 #sig2 = np.sum(clf.V[:,0,0] * clf.alpha)
+                #print(l, np.sqrt(sig2), np.std(vrz), np.median(np.abs(vrz - np.median(vrz))))
                 
-                #print(l, np.sqrt(sig2), np.std(vz), np.median(np.abs(vz - np.median(vz))))
-                
-                plt.sca(ax[int(l/Ncol)][l%Ncol])
-                plt.hist(vr*vz, bins=np.linspace(-3000,3000,30))
-                plt.axvline(med, color='k', lw=2)
+                ##plt.sca(ax[int(l/Ncol)][l%Ncol])
+                ##plt.hist(vr*vz, bins=np.linspace(-3000,3000,30))
+                ##plt.axvline(med, color='k', lw=2)
                 
                 #v_ = np.arange(-100, 100, 15)
                 #vc_ = myutils.bincen(v_)
@@ -969,10 +986,24 @@ def vzvr_xd(test=True, dz=0.04, signed=False, off=0):
                 ##plt.ylim(-1,1)
                 #plt.xlim(-100,100)
         
-        np.savez('../data/vrz_xd{}_logg{}_teff{}_z{}_s{:1d}'.format(ncomp, logg_id[i], teff[i], l, signed), mu=mu, var=var, alpha=alpha)
+        plt.plot(z, mvz, 'r-', label='$<V_{Z}>$')
+        plt.plot(z, mvr, 'b-', label='$<V_{R}>$')
+        #plt.plot(z, mvrz, 'm-', label='$<V_{RZ}>$')
+        plt.plot(z, svrz, 'm-', label='$<V_{R}V_{Z}>$')
+        
+        sig = svrz - mvz*mvr
+        plt.plot(z, sig, 'k-', label='$<V_{R}V_{Z}>$ - $<V_{R}>$$<V_{Z}>$')
+        
+        plt.xlim(0,2)
+        plt.ylim(-300,300)
+        
+        plt.legend(fontsize='medium')
+        plt.xlabel('Z (kpc)')
+        plt.ylabel('Velocity$^2$ (km/s)$^2$')
+        #np.savez('../data/vrz_xd{}_logg{}_teff{}_z{}_s{:1d}'.format(ncomp, logg_id[i], teff[i], l, signed), mu=mu, var=var, alpha=alpha)
     
         plt.tight_layout()
-        plt.savefig('../plots/vrz_xd{}_logg{}_teff{}_z{}_s{:1d}.png'.format(ncomp, logg_id[i], teff[i],l, signed))
+        plt.savefig('../plots/vrz_xd{}_logg{}_teff{}_z{}_s{:1d}.png'.format(ncomp, logg_id[i], teff[i],l, signed), dpi=200)
 
 
 def dataset_populations_xd(Nboot=100, ncomp=10, dz=0.04, signed=False, test=False):
@@ -1024,16 +1055,22 @@ def dataset_populations_xd(Nboot=100, ncomp=10, dz=0.04, signed=False, test=Fals
         zeff = np.zeros(Nb)
         vrz = np.ones(Nb)*np.nan
         vrze = np.ones(Nb)*np.nan
-        
-        fin = '../data/vz_xd{}_logg{}_teff{}_z{}_s{:1d}.npz'.format(ncomp, logg_id[i], teff[i], Nb-1, signed)
-        d = np.load(fin)
-        fin = '../data/vrz_xd{}_logg{}_teff{}_z{}_s{:1d}.npz'.format(ncomp, logg_id[i], teff[i], Nb-1, signed)
-        drz = np.load(fin)
+        srz = np.ones(Nb)*np.nan
+        srze = np.ones(Nb)*np.nan
+
+        d = np.load('../data/vz_xd{}_logg{}_teff{}_z{}_s{:1d}.npz'.format(ncomp, logg_id[i], teff[i], Nb-1, signed))
+        drz = np.load('../data/vrz_xd{}_logg{}_teff{}_z{}_s{:1d}.npz'.format(ncomp, logg_id[i], teff[i], Nb-1, signed))
+        #if signed:
+            #d = np.load('../data/vz_xd{}_logg{}_teff{}_z{}_s{:1d}.npz'.format(ncomp, logg_id[i], teff[i], Nb-1, signed))
+            #drz = np.load('../data/vrz_xd{}_logg{}_teff{}_z{}_s{:1d}.npz'.format(ncomp, logg_id[i], teff[i], Nb-1, signed))
+        #else:
+            #d = np.load('../data/vz_xd{}_logg{}_teff{}_z{}.npz'.format(ncomp, logg_id[i], teff[i], Nb-2))
+            #drz = np.load('../data/vrz_xd{}_logg{}_teff{}_z{}.npz'.format(ncomp, logg_id[i], teff[i], Nb-2))
         #deff = np.load('../data/veff_logg{}_spt{}_z{}.npz'.format(logg_id[i], teff[i], Nb_aux))
         
         tgas = Table.read('../data/nu_tgas_logg{}_teff{}_z{}_s{:1d}.fits'.format(logg_id[i], teff[i], Nb_aux, signed))
         
-        for l in range(Nb):
+        for l in range(Nb-1):
             if np.sum(idx==l+1):
                 # extreme deconvolution values
                 if np.all(np.isfinite(d['alpha'][l])):
@@ -1043,6 +1080,8 @@ def dataset_populations_xd(Nboot=100, ncomp=10, dz=0.04, signed=False, test=Fals
                     sze[l] = sz[l] / np.sqrt(nz[l])
                     vrz[l] = np.sum(drz['alpha'][l] * drz['mu'][l])
                     vrze[l] = np.abs(vrz[l] / np.sqrt(nz[l]))
+                    srz[l] = (np.sum(drz['alpha'][l] * drz['var'][l]))**0.25
+                    srze[l] = srz[l] / np.sqrt(nz[l])
                 
                 # bootstrap
                 Nstar = np.size(s.v[:,2][selection][idx==l+1])
@@ -1063,7 +1102,7 @@ def dataset_populations_xd(Nboot=100, ncomp=10, dz=0.04, signed=False, test=Fals
                 neff[l] = tgas['nu'][l]
                 zeff[l] = tgas['z'][l]
         
-        t = Table([z, hz, nz, vz, vze, sz, sze, vrz, vrze, feh, age, neff, zeff], names=('z', 'nu', 'n', 'vz', 'vze', 'sz', 'sze', 'vrz', 'vrze', 'feh', 'age', 'nueff', 'zeff'))
+        t = Table([z, hz, nz, vz, vze, sz, sze, vrz, vrze, srz, srze, feh, age, neff, zeff], names=('z', 'nu', 'n', 'vz', 'vze', 'sz', 'sze', 'vrz', 'vrze', 'srz', 'srze', 'feh', 'age', 'nueff', 'zeff'))
         t.write('../data/profile_xd{}_logg{}_teff{}_z{}_s{:1d}.fits'.format(ncomp, logg_id[i], teff[i], Nb_aux, signed), overwrite=True)
         t.pprint()
 
@@ -1258,6 +1297,118 @@ def nu_tgas(teff=2, logg=0, dz=0.04, signed=False):
     plt.tight_layout()
     plt.savefig('../plots/nu_tgas_logg{}_teff{}_z{}_s{:1d}.png'.format(logg, teff, l, signed))
 
+
+# vrvz variations
+def vrvz_gradient(logg=1, teff=6, dz=0.1, signed=1):
+    """"""
+    
+    if signed:
+        z_bins = np.arange(-4, 4+dz, dz)
+    else:
+        z_bins = np.arange(0, 4+dz, dz)
+
+    z = myutils.bincen(z_bins)
+    Nb = np.size(z)
+    Nb_aux = np.size(z_bins) - 2
+    
+    x = np.array([-7.5,-7.9,-8.3,-8.7,-9.1])
+    Nx = np.size(x)
+    
+    vrz = np.ones((Nx, Nb))*np.nan
+    
+    plt.close()
+    plt.figure(figsize=(10,6))
+    
+    for i, x0 in enumerate(x):
+        fname = '../data/vrz_xd10_logg{}_teff{}_x0{:.1f} kpc_z{}_s{:d}.npz'.format(logg, teff, x0, Nb_aux, signed)
+        if os.path.isfile(fname):
+            drz = np.load(fname)
+
+            for l in range(Nb):
+                vrz[i][l] = np.sum(drz['alpha'][l] * drz['mu'][l])
+    
+    Ntot = np.sum(np.any(np.isfinite(vrz), axis=0))
+
+    xvec = np.empty(0)
+    zvec = np.empty(0)
+    vrzvec = np.empty(0)
+    for l in range(Nb):
+        if np.any(np.isfinite(vrz[:,l])):
+            c = mpl.cm.viridis(l/Nb)
+            if z[l]>0:
+                c = 'g'
+            else:
+                c = 'b'
+            plt.plot(np.abs(x), vrz[:,l], 'o', color=c, ms=10, lw=2) #, label='z = {:.2f} kpc'.format(z[l]))
+            
+            finite = np.isfinite(vrz[:,l])
+            xvec = np.concatenate((xvec, x[finite]))
+            zvec = np.concatenate((zvec, np.repeat(z[l], np.sum(finite))))
+            vrzvec = np.concatenate((vrzvec, vrz[:,l][finite]))
+    
+    cols = ['g', 'b']
+    labels = ['N', 'S']
+    if signed:
+        above = zvec>0
+        for e, sub in enumerate([above, ~above]):
+            p = np.polyfit(np.abs(xvec[sub]), vrzvec[sub], 1)
+            print(p)
+            
+            poly = np.poly1d(p)
+            plt.plot(np.abs(x), poly(np.abs(x)), '-', c=cols[e], label='{}: {:.0f}'.format(labels[e], p[0]) + ' km$^2$ s$^{-2}$ kpc$^{-1}$', lw=2)
+    else:
+        p = np.polyfit(np.abs(xvec), vrzvec, 1)
+        print(p)
+    
+    plt.legend(fontsize='small', ncol=1)
+    plt.xlim(7.3,9.3)
+    plt.xlabel('R (kpc)')
+    plt.ylabel('$V_RV_Z$ (km s$^{-1}$)$^2$')
+    
+    plt.savefig('../plots/vrvz_gradient_logg{}_teff{}_z{}_s{:d}.png'.format(logg, teff, Nb_aux, signed))
+
+def dataset_populations_xd_rvrz(Nboot=100, ncomp=10, dz=0.04, signed=False, test=False):
+    """"""
+    s = Sample()
+    
+    if signed:
+        z_bins = np.arange(-4, 4+dz, dz)
+    else:
+        z_bins = np.arange(0, 4+dz, dz)
+
+    z = myutils.bincen(z_bins)
+    Nb = np.size(z)
+    Nb_aux = np.size(z_bins) - 2
+    l = np.argmin(np.abs(z))
+    
+    x = np.array([-7.5,-7.9,-8.3,-8.7,-9.1])
+    Nx = np.size(x)
+    dr = 0.2*u.kpc
+    
+    logg = [s.dwarf, s.dwarf, s.dwarf, s.giant, s.giant]
+    logg_id = [0, 0, 0, 1, 1]
+    teff = [2, 3, 4, 5, 6]
+    Npop = len(teff)
+    if test:
+        Npop = 1
+    
+    for i in range(Npop):
+        vrz = np.ones(Nx)*np.nan
+        vrze = np.ones(Nx)*np.nan
+        
+        for j, x0 in enumerate(x):
+            fname = '../data/vrz_xd10_logg{}_teff{}_x0{:.1f} kpc_z{}_s{:d}.npz'.format(logg_id[i], teff[i], x0, Nb_aux, signed)
+            if os.path.isfile(fname):
+                drz = np.load(fname)
+                vrz[j] = np.sum(drz['alpha'][l] * drz['mu'][l])
+                
+                selection = logg[i] & s.spectype[teff[i]] & (s.verr[:,2]<20) & ((s.x[:,0] - x0*u.kpc)**2 + s.x[:,1]**2<dr**2)
+                n = np.sum(selection)
+                vrze[j] = np.abs(vrz[j] / np.sqrt(n))
+        
+        t = Table([np.abs(x), vrz, vrze], names=('R', 'dvrz', 'dvrze'))
+        t.write('../data/rvrz_xd{}_logg{}_teff{}_z{}_s{:1d}.fits'.format(ncomp, logg_id[i], teff[i], Nb_aux, signed), overwrite=True)
+        t.pprint()
 
 def nu_tgas_fit(teff=2, logg=0):
     """"""
@@ -1979,7 +2130,171 @@ def plot_dataset():
     
     plt.tight_layout()
     plt.savefig('../plots/mgiants_profiles.png')
+
+
+# velocity ellipsoid
+
+def ellipsoid_z(test=True, dz=0.04, nmin=20, signed=False):
+    """Extreme deconvolution of VzVR velocities"""
     
+    s = Sample()
+    
+    if signed:
+        z_bins = np.arange(-4, 4+dz, dz)
+    else:
+        z_bins = np.arange(0, 4+dz, dz)
+        s.x[:,2] = np.abs(s.x[:,2])
+    
+    z = myutils.bincen(z_bins)
+    Nb = np.size(z)
+    
+    #Nrow = 5
+    #Ncol = np.int(np.ceil(Nb/Nrow))
+    #d = 5
+    
+    logg = [s.giant, s.dwarf, s.dwarf, s.dwarf, s.giant, s.giant]
+    logg_id = [1, 0, 0, 0, 1, 1]
+    teff = [6, 2, 3, 4, 5, 6]
+    Npop = len(teff)
+    
+    if test:
+        Npop = 1
+        Nb = 10
+    
+    np.random.seed(4091)
+    
+    # cylindrical coordinates
+    vz = s.v[:,2].value
+    
+    vx = s.v[:,0].value
+    vy = s.v[:,1].value
+    thx = np.arctan2(s.x[:,1].value, s.x[:,0].value)
+    thv = np.arctan2(s.v[:,1].value, s.v[:,0].value)
+    vr = np.sqrt(vx**2 + vy**2) * np.cos(thx+thv)
+    
+    vxe = s.verr[:,0]
+    vye = s.verr[:,1]
+    vze = s.verr[:,2]
+    vre = np.sqrt((vx[0]*vxe/vr[0])**2 + (vy[0]*vye/vr[0])**2) * np.cos(thx+thv)**2
+    
+    # initial parameters
+    mur = 10
+    muz = 10
+    srr = 100
+    srz = 10
+    szz = 100
+    x0 = np.array([mur, muz, srr, szz, srz])
+    
+    for i in range(Npop):
+        #plt.close()
+        ##fig, ax = plt.subplots(Nrow,Ncol, figsize=(Ncol*d, Nrow*d), sharex=True, squeeze=False)
+        #plt.figure(figsize=(8,6))
+    
+        psel = logg[i] & s.spectype[teff[i]] & (s.verr[:,2]<20)
+        hz, be = np.histogram(s.x[:,2][psel].value, bins=z_bins, weights=s.cf[psel])
+        nz, be = np.histogram(s.x[:,2][psel].value, bins=z_bins)
+        idx  = np.digitize(s.x[:,2][psel].value, bins=z_bins)
+        
+        
+        for l in range(Nb):
+            if np.sum(idx==l+1)>nmin:
+                zsel = idx==l+1
+                vz_ = vz[psel][zsel]
+                vr_ = vr[psel][zsel]
+                
+                vze_ = vze[psel][zsel]
+                vre_ = vre[psel][zsel]
+                
+                N = np.size(vre_)
+                v = np.array([vr_, vz_]).T
+                sig1 = np.array([vre_, vze_]).T
+                
+                sig = np.empty((N,2,2))
+                for i_ in range(N):
+                    sig[i_] = np.diag(sig1[i_])
+                
+                #lnl = lnlike_ellipsoid(x0, v, sig)
+                fit_ellipsoid(x0, v, sig, fout='../data/chains/ellipsoid_l{}_t{}_dz{}_l{}'.format(logg_id[i], teff[i], dz, l), nwalkers=100, nburn=500, nstep=500)
+
+
+def lnlike_ellipsoid(x, v, sig):
+    """"""
+    # prior
+    if (x[2]<0) | (x[3]<0):
+        return -np.inf
+    
+    # likelihood
+    else:
+        # populate gaussian vectors
+        mu = np.array([x[0],x[1]])
+        sigma = np.array([[x[2], x[4]],[x[4], x[3]]])
+        
+        mu_ = v - mu[np.newaxis,:]
+        sigma_ = sigma[np.newaxis,:,:] + sig
+        
+        # covariance inverse + det
+        inv_sigma_ = np.linalg.inv(sigma_)
+        det = np.linalg.det(sigma_)
+        
+        #print(inv_sigma_)
+        #print(det)
+        
+        # calculate chi2
+        aux = np.einsum('ijk,ik->ij', inv_sigma_, mu_)
+        prod = np.einsum('ij,ij->i', aux, mu_)
+        
+        # sum over all stars
+        lj = -0.5*prod - 2*np.pi - 0.5*np.log(np.abs(det))
+        lnl = np.sum(lj)
+        
+        return lnl
+
+def fit_ellipsoid(init, v, sig, fout='', nstep=400, nburn=200, nwalkers=100):
+    """"""
+    
+    # setup
+    ndim = np.size(init)
+    pos = [init + init*1e-1*np.random.randn(ndim) for i in range(nwalkers)]
+    threads = 3
+    pool = multiprocessing.Pool(threads)
+    sampler = emcee.EnsembleSampler(nwalkers, ndim, lnlike_ellipsoid, pool=pool, args=(v, sig))
+    
+    # sample
+    pos, prob, state = sampler.run_mcmc(pos, nburn)
+    sampler.reset()
+    pos, prob, state = sampler.run_mcmc(pos, nstep, rstate0=state)
+    
+    # save
+    np.savez(fout, lnp=sampler.flatlnprobability, chain=sampler.flatchain)
+    
+    pool.close()
+
+def check_ellipsoid(l=0):
+    """"""
+    #l = 0
+    dz = 0.04
+    logg_id = 1
+    teff = 6
+    data = np.load('../data/chains/ellipsoid_l{}_t{}_dz{}_l{}.npz'.format(logg_id, teff, dz, l))
+    chain = data['chain']
+    lnp = data['lnp']
+    
+    print(l, np.median(chain, axis=0))
+    nstep = 400
+    step = np.arange(nstep)
+    labels = ['vr', 'vz', 'srr', 'szz', 'srz']
+    
+    plt.close()
+    fig, ax = plt.subplots(2,3,figsize=(9,6))
+    
+    for i in range(5):
+        plt.sca(ax[i%2][np.int64(i/2)])
+        plt.plot(step, chain[:,i].reshape(nstep,-1))
+        
+        plt.xlabel('Step')
+        plt.ylabel(labels[i])
+    
+    plt.tight_layout()
 
 #########
 # Fitting
@@ -3518,8 +3833,13 @@ def test_jeans_2side(logg=0, teff=2, l=79, Nboot=1, alpha=1):
     sign = [1, -1]
     data = [[None, None] for x in range(Nboot)]
     
+    tx = Table.read('../data/rvrz_xd10_logg{}_teff{}_z{}_s1.fits'.format(logg, teff, l))
+    finite = np.isfinite(tx['dvrz'])
+    tx = tx[finite]
+    Nx = len(tx)
+    
     plt.close()
-    fig, ax = plt.subplots(2,3, figsize=(15,10), sharex=True)
+    fig, ax = plt.subplots(2,4, figsize=(15,6), sharex='col')
     
     for e, t in enumerate([ts, tn]):
         N = len(t)
@@ -3556,6 +3876,7 @@ def test_jeans_2side(logg=0, teff=2, l=79, Nboot=1, alpha=1):
             dn = np.zeros(N)[np.newaxis,:]
             dsz = np.zeros(N)[np.newaxis,:]
             dvrz = np.zeros(N)[np.newaxis,:]
+            drvrz = np.zeros(Nx)[np.newaxis,:]
         else:
             np.random.seed(59)
             dn = np.random.randn(Nboot,N) * t['nueff']/np.sqrt(t['n'])
@@ -3564,6 +3885,7 @@ def test_jeans_2side(logg=0, teff=2, l=79, Nboot=1, alpha=1):
             dsz[~np.isfinite(dsz)] = 0
             dvrz = np.random.randn(Nboot,N) * t['vrze']
             dvrz[~np.isfinite(dvrz)] = 0
+            drvrz = np.random.randn(Nboot,Nx) * tx['dvrze']
         
         # data bootstrap
         for i in range(Nboot):
@@ -3612,7 +3934,12 @@ def test_jeans_2side(logg=0, teff=2, l=79, Nboot=1, alpha=1):
             k = kall[logg]
             krz = krzall[logg]
 
-            y_data = (-sign[e]*fit_nusig_der(z) / fit_nu(z) - (1+alpha)*fit_vrz(z)/8.3) * y_model.unit
+            # polyfit vrvz vs r
+            p = np.polyfit(tx['R'], tx['dvrz']+drvrz[i], 1)
+            #print(p)
+
+            y_data = (-sign[e]*fit_nusig_der(z) / fit_nu(z) - (1+alpha)*fit_vrz(z)/8.3 - (-sign[e]*600)) * y_model.unit
+            #y_data = (-sign[e]*fit_nusig_der(z) / fit_nu(z) - (1+alpha)*fit_vrz(z)/8.3 - (-sign[e]*324)) * y_model.unit
             data[i][e] = y_data.to(u.cm*u.s**-2)
             
             #poly_nusig_der = np.poly1d(p_nusig_der)
@@ -3648,7 +3975,7 @@ def test_jeans_2side(logg=0, teff=2, l=79, Nboot=1, alpha=1):
         plt.gca().set_yscale('log')
         plt.ylabel('Z (kpc)')
         plt.ylabel('N')
-        plt.legend(fontsize='small')
+        plt.legend(fontsize='x-small')
         
         plt.sca(ax[0][1])
         plt.plot(t['z'], t['nueff']*t['sz']**2, 'o', color=colors[e], mec='k', alpha=0.3, label='Gaia + RAVE')
@@ -3659,7 +3986,7 @@ def test_jeans_2side(logg=0, teff=2, l=79, Nboot=1, alpha=1):
         plt.gca().set_yscale('log')
         #plt.xlabel('Z (kpc)')
         plt.ylabel('N $\sigma_z^2$ (km$^2$ s$^{-2}$)')
-        plt.legend(fontsize='small')
+        #plt.legend(fontsize='small')
         
         plt.sca(ax[0][2])
         #plt.plot(t['z'], t['sz'], 'o', color=colors[e], mec='k', alpha=0.3, label='Gaia + RAVE')
@@ -3670,7 +3997,7 @@ def test_jeans_2side(logg=0, teff=2, l=79, Nboot=1, alpha=1):
         plt.ylim(-2000, 2000)
         #plt.xlabel('Z (kpc)')
         plt.ylabel('$V_{Rz}$ (km$^2$ s$^{-2}$)')
-        plt.legend(fontsize='small')
+        #plt.legend(fontsize='small')
         
         plt.sca(ax[1][0])
         if e==1:
@@ -3683,7 +4010,7 @@ def test_jeans_2side(logg=0, teff=2, l=79, Nboot=1, alpha=1):
         plt.xlim(0, 2)
         plt.xlabel('|Z| (kpc)')
         plt.ylabel('Acceleration (km$^2$ s$^{-2}$ kpc$^{-1}$)')
-        plt.legend(fontsize='small')
+        #plt.legend(fontsize='small')
         
         plt.sca(ax[1][1])
         plt.axhline(0, color='r')
@@ -3710,6 +4037,17 @@ def test_jeans_2side(logg=0, teff=2, l=79, Nboot=1, alpha=1):
         plt.ylim(-1e-8, 1e-8)
         plt.xlabel('|Z| (kpc)')
         plt.ylabel('$a_N$ + $a_S$ (cm s$^{-2}$)')
+
+    plt.sca(ax[0][3])
+    plt.plot(tx['R'], tx['dvrz'], 'ko', alpha=0.3)
+    plt.fill_between(tx['R'], tx['dvrz']-tx['dvrze'], tx['dvrz']+tx['dvrze'], color='k', alpha=0.3)
+    
+    plt.xlabel('R (kpc)')
+    plt.ylabel('$V_{Rz}$ (km$^2$ s$^{-2}$)')
+    plt.xlim(7.3, 9.3)
+    
+    plt.sca(ax[1][3])
+    plt.axis('off')
 
     plt.tight_layout()
     plt.savefig('../plots/jeans_test_logg{}_teff{}_z{}_s1_boot{}.png'.format(logg, teff, l, Nboot))
@@ -3929,3 +4267,192 @@ def spatial_layout(logg=1, teff=5):
     plt.xlim(-2,2)
     
     plt.tight_layout()
+
+
+
+
+def full_jeans(logg=1, teff=5, l=39, optimize=True):
+    """"""
+    
+    h = 0.3*u.kpc
+    nu0 = 7e5*u.kpc**-3
+    sz0 = 15*u.km/u.s
+    srz0 = 25*u.km/u.s
+    
+    if teff==6:
+        nu0 = 1e5*u.kpc**-3
+        h = 0.25*u.kpc
+        srz0 = 25*u.km/u.s
+    
+    A = 15.3*u.km*u.s**-1*u.kpc**-1
+    B = -11.9*u.km*u.s**-1*u.kpc**-1
+    C = (10*u.km*u.s**-1)**2 * nu0
+    rhodm = 0.008*u.Msun*u.pc**-3
+    H = 0.2*u.kpc
+    sigs = 42*u.Msun*u.pc**-2
+    sigg = 13*u.Msun*u.pc**-2
+    Rsun = 8.3*u.kpc
+    R0 = 1*u.kpc
+    D = 1500*u.km**2*u.s**-2
+    n = 2
+    z0 = 1*u.kpc
+    
+    t = Table.read('../data/profile_xd10_logg{}_teff{}_z{}_s0.fits'.format(logg, teff, l))
+    #print(t.colnames)
+    
+    z = np.linspace(0,2,100)*u.kpc
+    nuz = nu0*np.exp(-z/h)
+    
+    vrz = D*(z/z0)**n + (55*u.km/u.s)**2
+    
+    sz = full_sz(z=z, nu0=nu0, h=h, sz0=sz0, D=D, n=n)
+    szfid = full_sz(z=z, nu0=nu0, h=h, sz0=sz0, D=-0*u.km**2*u.s**-2, B=0*u.km*u.s**-1*u.kpc**-1, A=0*u.km*u.s**-1*u.kpc**-1)
+    
+    x = [sigs.value, H.value, rhodm.value, D.value, n, R0.value, nu0.value, h.value, sz0.value, srz0.value]
+    
+    mask = (t['z']>0.2) & (t['z']<1.2)
+    tm = t[mask]
+    nue = tm['nueff']/np.sqrt(tm['n'])
+    
+    p = lnlike(x, tm['zeff'], tm['nueff'], nue, tm['z'], tm['sz'], tm['sze'], tm['srz'], tm['srze'])
+    print(p)
+    
+    if optimize:
+        res = scipy.optimize.minimize(chi_fn, x, args=(tm['zeff'], tm['nueff'], nue, tm['z'], tm['sz'], tm['sze'], tm['srz'], tm['srze']))
+        print(res.x)
+        print(res.success)
+        print(res.status)
+        print(res.message)
+        np.save('../data/minchi_logg{}_teff{}_z{}_s0'.format(logg, teff, l), res.x)
+        x = res.x
+    else:
+        x = np.load('../data/minchi_logg{}_teff{}_z{}_s0.npy'.format(logg, teff, l))
+    print(x)
+    
+    nuzbest = x[6]*np.exp(-z.value/x[7])
+    szbest = full_sz(z=z, sigs=x[0]*u.Msun*u.pc**-2, H=x[1]*u.kpc, rhodm=x[2]*u.Msun*u.pc**-3, D=x[3]*u.km**2*u.s**-2, n=x[4], R0=x[5]*u.kpc, nu0=x[6]*u.kpc**-3, h=x[7]*u.kpc, sz0=x[8]*u.km*u.s**-1)
+    srzbest = np.sqrt(x[3]*(z/z0)**x[4] + x[9]**2)
+    
+    nuzbest_ = x[6]*np.exp(-tm['zeff']/x[7])
+    szbest_ = full_sz(z=tm['z']*u.kpc, sigs=x[0]*u.Msun*u.pc**-2, H=x[1]*u.kpc, rhodm=x[2]*u.Msun*u.pc**-3, D=x[3]*u.km**2*u.s**-2, n=x[4], R0=x[5]*u.kpc, nu0=x[6]*u.kpc**-3, h=x[7]*u.kpc, sz0=x[8]*u.km*u.s**-1).value
+    srzbest_ = np.sqrt(x[3]*(tm['z']*u.kpc/z0)**x[4] + x[9]**2)
+    
+    a = 0.2
+    
+    plt.close()
+    fig, ax = plt.subplots(2,3, figsize=(15,7), gridspec_kw = {'height_ratios':[5,2]}, sharex='col', squeeze=False)
+    
+    plt.sca(ax[0][0])
+    plt.plot(t['zeff'], t['nueff'], 'ko', alpha=a)
+    plt.errorbar(t['zeff'], t['nueff'], yerr=t['nueff']/np.sqrt(t['n']), fmt='none', color='k', alpha=a)
+    plt.plot(tm['zeff'], tm['nueff'], 'ko')
+    plt.errorbar(tm['zeff'], tm['nueff'], yerr=tm['nueff']/np.sqrt(tm['n']), fmt='none', color='k')
+    plt.plot(z, nuzbest)
+    
+    plt.gca().set_yscale('log')
+    plt.ylabel('$\\nu$ (kpc$^{-3}$)')
+
+    plt.sca(ax[1][0])
+    plt.axhline(0, color='r')
+    plt.plot(tm['zeff'], tm['nueff']-nuzbest_, 'ko')
+    plt.errorbar(tm['zeff'], tm['nueff']-nuzbest_, yerr=tm['nueff']/np.sqrt(tm['n']), fmt='none', color='k')
+    plt.xlabel('Z (kpc)')
+    plt.ylabel('$\Delta$ $\\nu$')
+    
+    plt.sca(ax[0][1])
+    plt.plot(t['z'], t['sz'], 'ko', alpha=a)
+    plt.errorbar(t['z'], t['sz'], yerr=t['sze'], fmt='none', color='k', alpha=a)
+    plt.plot(tm['z'], tm['sz'], 'ko')
+    plt.errorbar(tm['z'], tm['sz'], yerr=tm['sze'], fmt='none', color='k')
+    plt.plot(z, szbest)
+    
+    plt.ylim(0,50)
+    plt.ylabel('$\sigma_{z}$ (km s$^{-1}$)')
+    
+    plt.sca(ax[1][1])
+    plt.axhline(0, color='r')
+    plt.plot(tm['zeff'], tm['sz']-szbest_, 'ko')
+    plt.errorbar(tm['z'], tm['sz']-szbest_, yerr=tm['sze'], fmt='none', color='k')
+    plt.xlabel('Z (kpc)')
+    plt.ylabel('$\Delta$ $\sigma_z$')
+    
+    plt.sca(ax[0][2])
+    plt.plot(t['z'], t['srz'], 'ko', alpha=a)
+    plt.errorbar(t['z'], t['srz'], yerr=t['srze'], fmt='none', color='k', alpha=a)
+    plt.plot(tm['z'], tm['srz'], 'ko')
+    plt.errorbar(tm['z'], tm['srz'], yerr=tm['srze'], fmt='none', color='k')
+    plt.plot(z, srzbest)
+
+    plt.ylabel('$\sigma_{Rz}$ (km s$^{-1}$)')
+    
+    plt.sca(ax[1][2])
+    plt.axhline(0, color='r')
+    plt.plot(tm['zeff'], tm['srz']-srzbest_, 'ko')
+    plt.errorbar(tm['z'], tm['srz']-srzbest_, yerr=tm['srze'], fmt='none', color='k')
+    plt.xlabel('Z (kpc)')
+    plt.ylabel('$\Delta$ $\sigma_{Rz}$')
+    
+    
+    plt.tight_layout()
+    
+
+def full_sz(z=np.nan, A=15.3*u.km*u.s**-1*u.kpc**-1, B=-11.9*u.km*u.s**-1*u.kpc**-1, sigg=13.2*u.Msun*u.pc**-2, Rsun=8.3*u.kpc, z0=1*u.kpc, sigs=12*u.Msun*u.pc**-2, H=0.2*u.kpc, rhodm=0.01*u.Msun*u.pc**-3, D=324*u.km**2*u.s**-2, n=1.16, R0=1*u.kpc, nu0=1e6*u.kpc**-3, h=0.3*u.kpc, sz0=10*u.km*u.s**-1):
+    """"""
+    
+    if np.any(~np.isfinite(z)):
+        z = np.linspace(0,2,100)*u.kpc
+    
+    nuz = nu0*np.exp(-z/h)
+    C = sz0**2 * nu0
+
+    sz2 = (C/nuz + nu0/nuz * ( -(4*np.pi*G*rhodm - 2*(B**2 - A**2)) * h * (h - np.exp(-(z/h).value)*(h+z))
+                             - 2*np.pi*G * (sigs + sigg) * (h - h*np.exp(-(z/h).value))
+                             - 2*np.pi*G*sigs * h*H/(h + H) * (np.exp(-((z*(h+H))/(h*H)).value) - 1)
+                             - D*(1/Rsun - 2/R0)*z0**-n * h**(n+1) * scipy.special.gammainc(n+1, (z/h).value)
+        )).to(u.km**2*u.s**-2)
+    
+    sz = np.sqrt(sz2)
+    
+    return sz
+
+def lnlike(x, znu, nu, nue, z, sz, sze, srz, srze):
+    """"""
+    if (x[0]<0) | (x[1]<0) | (x[2]<0):
+        lnp = -np.inf
+    else:
+        chi = chi_fn(x, znu, nu, nue, z, sz, sze, srz, srze)
+        lnp = -0.5*chi
+    
+    return lnp
+
+def chi_fn(x, znu, nu, nue, z, sz, sze, srz, srze):
+    """"""
+    chi = 0.
+    chi += chi_nu(x, znu, nu, nue)
+    chi += chi_sigz(x, z, sz, sze)
+    chi += chi_sigrz(x, z, srz, srze)
+    
+    return chi
+
+def chi_nu(x, z, nu, nue):
+    """"""
+    nu_mod = x[6] * np.exp(-z/x[7])
+    err = nue/nu
+    chi2 = np.nansum((np.log(nu_mod) - np.log(nu))**2/err**2)
+    
+    return chi2
+
+def chi_sigz(x, z, sz, sze):
+    """"""
+    sz_mod = full_sz(z=z*u.kpc, sigs=x[0]*u.Msun*u.pc**-2, H=x[1]*u.kpc, rhodm=x[2]*u.Msun*u.pc**-3, D=x[3]*u.km**2*u.s**-2, n=x[4], R0=x[5]*u.kpc, nu0=x[6]*u.kpc**-3, h=x[7]*u.kpc, sz0=x[8]*u.km*u.s**-1).value
+    chi2 = np.nansum((sz_mod - sz)**2/sze**2)
+    
+    return chi2
+
+def chi_sigrz(x, z, srz, srze):
+    """"""
+    srz_mod = np.sqrt(x[3]*(z)**x[4] + x[9]**2)
+    chi2 = np.nansum((srz_mod - srz)**2/srze**2)
+    
+    return chi2
+
