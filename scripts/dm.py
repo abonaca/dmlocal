@@ -2296,6 +2296,11 @@ def check_ellipsoid(logg_id=0, teff=2, dz=0.1, l=0):
         plt.xlabel('Step')
         plt.ylabel(labels[i])
     
+    plt.sca(ax[1][2])
+    plt.plot(step, lnp.reshape(nstep,-1))
+    plt.xlabel('Step')
+    plt.ylabel('ln P')
+    
     plt.tight_layout()
 
 #########
