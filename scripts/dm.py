@@ -2155,9 +2155,9 @@ def ellipsoid_z(test=True, dz=0.04, nmin=20, signed=False):
     #Ncol = np.int(np.ceil(Nb/Nrow))
     #d = 5
     
-    logg = [s.giant, s.dwarf, s.dwarf, s.dwarf, s.giant, s.giant]
-    logg_id = [1, 0, 0, 0, 1, 1]
-    teff = [6, 2, 3, 4, 5, 6]
+    logg = [s.dwarf, s.dwarf, s.dwarf, s.giant, s.giant]
+    logg_id = [0, 0, 0, 1, 1]
+    teff = [2, 3, 4, 5, 6]
     Npop = len(teff)
     
     if test:
@@ -2197,7 +2197,6 @@ def ellipsoid_z(test=True, dz=0.04, nmin=20, signed=False):
         hz, be = np.histogram(s.x[:,2][psel].value, bins=z_bins, weights=s.cf[psel])
         nz, be = np.histogram(s.x[:,2][psel].value, bins=z_bins)
         idx  = np.digitize(s.x[:,2][psel].value, bins=z_bins)
-        
         
         for l in range(Nb):
             if np.sum(idx==l+1)>nmin:
@@ -2272,12 +2271,12 @@ def fit_ellipsoid(init, v, sig, fout='', nstep=400, nburn=200, nwalkers=100):
     
     pool.close()
 
-def check_ellipsoid(l=0):
+def check_ellipsoid(logg_id=0, teff=2, dz=0.1, l=0):
     """"""
     #l = 0
-    dz = 0.04
-    logg_id = 1
-    teff = 6
+    #dz = 0.04
+    #logg_id = 1
+    #teff = 6
     data = np.load('../data/chains/ellipsoid_l{}_t{}_dz{}_l{}.npz'.format(logg_id, teff, dz, l))
     chain = data['chain']
     lnp = data['lnp']
