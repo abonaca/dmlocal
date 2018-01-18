@@ -2272,36 +2272,125 @@ def fit_ellipsoid(init, v, sig, fout='', nstep=400, nburn=200, nwalkers=100):
     pool.close()
 
 def check_ellipsoid(logg_id=0, teff=2, dz=0.1, l=0):
-    """"""
-    #l = 0
-    #dz = 0.04
-    #logg_id = 1
-    #teff = 6
-    data = np.load('../data/chains/ellipsoid_l{}_t{}_dz{}_l{}.npz'.format(logg_id, teff, dz, l))
-    chain = data['chain']
-    lnp = data['lnp']
+    """Plot chains for fitting R,z velocity ellipsoid"""
     
-    print(l, np.median(chain, axis=0))
-    nstep = 400
-    step = np.arange(nstep)
-    labels = ['vr', 'vz', 'srr', 'szz', 'srz']
+    fin = '../data/chains/ellipsoid_l{}_t{}_dz{}_l{}.npz'.format(logg_id, teff, dz, l)
+    if os.path.isfile(fin):
+        data = np.load(fin)
+        chain = data['chain']
+        lnp = data['lnp']
     
-    plt.close()
-    fig, ax = plt.subplots(2,3,figsize=(9,6))
+        nstep = 400
+        step = np.arange(nstep)
+        labels = ['vr', 'vz', 'srr', 'szz', 'srz']
     
-    for i in range(5):
-        plt.sca(ax[i%2][np.int64(i/2)])
-        plt.plot(step, chain[:,i].reshape(nstep,-1))
+        plt.close()
+        fig, ax = plt.subplots(2,3,figsize=(9,6))
+    
+        for i in range(5):
+            plt.sca(ax[i%2][np.int64(i/2)])
+            plt.plot(step, chain[:,i].reshape(nstep,-1))
         
+            plt.xlabel('Step')
+            plt.ylabel(labels[i])
+    
+        plt.sca(ax[1][2])
+        plt.plot(step, lnp.reshape(nstep,-1))
         plt.xlabel('Step')
-        plt.ylabel(labels[i])
+        plt.ylabel('ln P')
     
-    plt.sca(ax[1][2])
-    plt.plot(step, lnp.reshape(nstep,-1))
-    plt.xlabel('Step')
-    plt.ylabel('ln P')
+        plt.tight_layout()
+        plt.savefig('../plots/diag/chains_ellipsoid_l{}_t{}_dz{}_l{}.png'.format(logg_id, teff, dz, l))
+
+def pdf_ellipsoid(logg_id=0, teff=2, dz=0.1, l=0):
+    """Plot triangle plot with samples of R,z velocity ellipsoid parameters"""
     
-    plt.tight_layout()
+    fin = '../data/chains/ellipsoid_l{}_t{}_dz{}_l{}.npz'.format(logg_id, teff, dz, l)
+    if os.path.isfile(fin):
+        data = np.load(fin)
+        samples = data['chain']
+        labels = ['vr', 'vz', 'srr', 'szz', 'srz']
+        plt.close()
+        fig = triangle.corner(samples, labels=labels, cmap='gray', quantiles=[0.16,0.50,0.84], angle=0, plot_contours=False)
+        
+        plt.savefig('../plots/diag/pdf_ellipsoid_l{}_t{}_dz{}_l{}.png'.format(logg_id, teff, dz, l))
+
+def dataset_ellipsoid(dz=0.04, signed=False, test=False):
+    """"""
+    
+    s = Sample()
+    sfok = s.cf>0
+    
+    if signed:
+        z_bins = np.arange(-4, 4+dz, dz)
+    else:
+        z_bins = np.arange(0, 4+dz, dz)
+        s.x[:,2] = np.abs(s.x[:,2])
+
+    z = myutils.bincen(z_bins)
+    Nb = np.size(z)
+    Nb_aux = np.size(z_bins) - 2
+    
+    logg = [s.dwarf, s.dwarf, s.dwarf, s.giant, s.giant]
+    logg_id = [0, 0, 0, 1, 1]
+    teff = [2, 3, 4, 5, 6]
+    Npop = len(teff)
+    if test:
+        Npop = 1
+    
+    for i in range(Npop):
+        selection = logg[i] & s.spectype[teff[i]] & (s.verr[:,2]<20) #& (s.data['Fe']>-0.5)#& sfok
+        
+        hz, be = np.histogram(s.x[:,2][selection & sfok].value, bins=z_bins, weights=1/(s.cf[selection & sfok]))
+        nz, be = np.histogram(s.x[:,2][selection].value, bins=z_bins)
+        idx  = np.digitize(s.x[:,2][selection].value, bins=z_bins)
+        
+        n = np.zeros(Nb)
+        feh = np.empty(Nb)
+        age = np.empty(Nb)
+        neff = np.zeros(Nb)
+        zeff = np.zeros(Nb)
+        
+        vz = np.ones(Nb)*np.nan
+        vze = np.ones(Nb)*np.nan        
+        sz = np.ones(Nb)*np.nan
+        sze = np.ones(Nb)*np.nan
+        vr = np.ones(Nb)*np.nan
+        vre = np.ones(Nb)*np.nan        
+        sr = np.ones(Nb)*np.nan
+        sre = np.ones(Nb)*np.nan
+        vrz = np.ones(Nb)*np.nan
+        vrze = np.ones(Nb)*np.nan
+        srz = np.ones(Nb)*np.nan
+        srze = np.ones(Nb)*np.nan
+        
+        tgas = Table.read('../data/nu_tgas_logg{}_teff{}_z{}_s{:1d}.fits'.format(logg_id[i], teff[i], Nb_aux, signed))
+        
+        vec_med = [vr, vz, sr, sz, srz]
+        vec_err = [vre, vze, sre, sze, srze]
+        
+        for l in range(Nb-1):
+            if np.sum(idx==l+1):
+                # density
+                nz[l] = tgas['n'][l]
+                neff[l] = tgas['nu'][l]
+                zeff[l] = tgas['z'][l]
+                
+                # velocity
+                vfin = '../data/chains/ellipsoid_l{}_t{}_dz{}_l{}.npz'.format(logg_id[i], teff[i], dz, l)
+                if os.path.isfile(vfin):
+                    vdata = np.load(vfin)
+                    samples = vdata['chain']
+                    percentiles = np.percentile(samples, [16,50,84], axis=0)
+                    for e in range(5):
+                        vec_med[e][l] = percentiles[1][e]
+                        vec_err[e][l] = 0.5*(percentiles[2][e] - percentiles[0][e])
+        
+        t = Table([z, hz, nz, feh, age, neff, zeff, vz, vze, sz, sze, vr, vre, sr, sre, vrz, vrze, srz, srze], names=('z', 'nu', 'n', 'feh', 'age', 'nueff', 'zeff', 'vz', 'vze', 'sz', 'sze', 'vr', 'vre', 'sr', 'sre', 'vrz', 'vrze', 'srz', 'srze'))
+        t.write('../data/profile_ell_logg{}_teff{}_z{}_s{:1d}.fits'.format(logg_id[i], teff[i], Nb_aux, signed), overwrite=True)
+        t.pprint()
+    
+
 
 #########
 # Fitting
