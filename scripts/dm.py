@@ -4559,7 +4559,37 @@ def full_jeans(logg=1, teff=5, l=39, optimize=True):
     plt.ylabel('$\Delta$ $\sigma_{Rz}$')
     
     plt.tight_layout()
+
+def get_pool(mpi=False, threads=None, verbose=False):
+    """ Get a pool object to pass to emcee for parallel processing.
+    If mpi is False and threads is None, pool is None.
+    Parameters
+    ----------
+    mpi : bool
+    Use MPI or not. If specified, ignores the threads kwarg.
+    threads : int (optional)
+    If mpi is False and threads is specified, use a Python
+    multiprocessing pool with the specified number of threads.
+    """
     
+    if mpi:
+        from emcee.utils import MPIPool
+        pool = MPIPool()
+    # Make sure the thread we're running on is the master
+        if not pool.is_master():
+            pool.wait()
+            sys.exit(0)
+        if verbose: print("Running with MPI...")
+    elif threads > 1:
+        import multiprocessing
+        if verbose: print("Running with multiprocessing on %d cores..."%threads)
+        pool = multiprocessing.Pool(threads)
+    else:
+        if verbose: print("Running serial...")
+        pool = None
+    
+    return pool
+
 def full_jeans_mcmc(logg=1, teff=5, l=39, test=True, cont=False, seeds=[638, 29], mpi=False, nth=4, nwalkers=100, nstep=100):
     """"""
     if cont:
