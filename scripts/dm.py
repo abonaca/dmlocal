@@ -4590,7 +4590,9 @@ def get_pool(mpi=False, threads=None, verbose=False):
     
     return pool
 
-def full_jeans_mcmc(logg=1, teff=5, l=39, test=True, cont=False, seeds=[638, 29], mpi=False, nth=4, nwalkers=100, nstep=100):
+import shutil
+
+def full_jeans_mcmc(logg=1, teff=5, l=39, verbose=True, test=True, cont=False, seeds=[638, 29], mpi=False, nth=4, nwalkers=100, nstep=100):
     """"""
     if cont:
         extension = '_cont'
@@ -4700,6 +4702,84 @@ def full_jeans_mcmc(logg=1, teff=5, l=39, test=True, cont=False, seeds=[638, 29]
         elif(mpi==True):
             sampler.pool.close()
 
+def combine_results(f, fcont, nwalkers):
+    """"""
+    
+    res = np.load(f)
+    res_cont = np.load(fcont)
+    nsample, ndim = np.shape(res['chain'])
+    
+    pack = res['chain'].reshape(nwalkers,-1,ndim)
+    pack_cont = res_cont['chain'].reshape(nwalkers,-1,ndim)
+    pack_comb = np.concatenate((pack, pack_cont), axis=1)
+    flat_comb = pack_comb.reshape(-1,ndim)
+    
+    ppack = res['lnp'].reshape(nwalkers,-1)
+    ppack_cont = res_cont['lnp'].reshape(nwalkers,-1)
+    ppack_comb = np.concatenate((ppack, ppack_cont), axis=1)
+    pflat_comb = ppack_comb.reshape(-1)
+    
+    np.savez(f, lnp=pflat_comb, chain=flat_comb)
+
+
+def analyze_chains(logg=1, teff=5, l=39):
+    """"""
+    
+    extension = ''
+    #dname = '../data/chains/progenitor_{}'.format(name)
+    dname = '../data/chains/fulljeans_logg{}_teff{}_z{}_s0'.format(logg, teff, l)
+    d = np.load('{}{}.npz'.format(dname, extension))
+    chain = d['chain']
+    lnp = d['lnp']
+    
+    nwalkers = 100
+    nstep, ndim = np.shape(chain)
+    nstep = int(nstep/nwalkers)
+    
+    nx = 2
+    ny = int((ndim+2)/2)
+    dx = 15
+    dy = dx*nx/ny
+    
+    plt.close()
+    fig, ax = plt.subplots(nx, ny, figsize=(dx, dy))
+
+    for i in range(ndim):
+        plt.sca(ax[int(i/ny)][i%ny])
+        plt.plot(np.arange(nstep), chain[:,i].reshape(nwalkers,nstep).T, '-');
+        plt.xlabel('Step')
+
+    plt.sca(ax[nx-1][ny-1])
+    plt.plot(np.arange(nstep), lnp.reshape(nwalkers,nstep).T, '-');
+    plt.xlabel('Step')
+    plt.ylabel('ln(p)')
+
+    plt.tight_layout()
+
+def fulljeans_pdf(logg=1, teff=5, l=39, nstart=0):
+    """Plot triangle plot with samples of R,z velocity ellipsoid parameters"""
+    
+    extension = ''
+    dname = '../data/chains/fulljeans_logg{}_teff{}_z{}_s0'.format(logg, teff, l)
+    d = np.load('{}{}.npz'.format(dname, extension))
+    chain = d['chain']
+    
+    nwalkers = 100
+    nstep, ndim = np.shape(chain)
+    nstep = int(nstep/nwalkers)
+    
+    samples = trim_chain(chain, nwalkers, nstart, ndim)
+    
+    labels = ['vr', 'vz', 'srr', 'szz', 'srz']
+    plt.close()
+    fig = triangle.corner(samples, cmap='gray', quantiles=[0.16,0.50,0.84], angle=0, plot_contours=False)
+        
+    #plt.savefig('../plots/diag/pdf_ellipsoid_l{}_t{}_dz{}_l{}.png'.format(logg_id, teff, dz, l))
+
+
+
+
+
 def full_sz(z=np.nan, A=15.3*u.km*u.s**-1*u.kpc**-1, B=-11.9*u.km*u.s**-1*u.kpc**-1, sigg=13.2*u.Msun*u.pc**-2, Rsun=8.3*u.kpc, z0=1*u.kpc, sigs=12*u.Msun*u.pc**-2, H=0.2*u.kpc, rhodm=0.01*u.Msun*u.pc**-3, D=324*u.km**2*u.s**-2, n=1.16, R0=1*u.kpc, nu0=1e6*u.kpc**-3, h=0.3*u.kpc, sz0=10*u.km*u.s**-1):
     """"""
     
@@ -4721,7 +4801,9 @@ def full_sz(z=np.nan, A=15.3*u.km*u.s**-1*u.kpc**-1, B=-11.9*u.km*u.s**-1*u.kpc*
 
 def lnlike(x, znu, nu, nue, z, sz, sze, srz, srze):
     """"""
-    if (x[0]<0) | (x[1]<0) | (x[2]<0) | (x[5]<0) | (x[7]<0) | (x[8]<0):
+    #sigs.value, H.value, rhodm.value, D.value, n, R0.value, nu0.value, h.value, sz0.value
+    
+    if (x[0]<0) | (x[1]<0) | (x[2]<0) | (x[0]>60) | (x[1]>1) | (np.abs(x[3])>1000) | (np.abs(x[4])>5) | (x[5]<0) | (x[7]<0) | (x[8]<0):
         lnp = -np.inf
     else:
         chi = chi_fn(x, znu, nu, nue, z, sz, sze, srz, srze)
