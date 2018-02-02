@@ -2137,7 +2137,7 @@ def plot_dataset():
 
 # velocity ellipsoid
 
-def ellipsoid_z(test=True, dz=0.04, nmin=20, signed=False):
+def ellipsoid_z(test=True, dz=0.04, nmin=20, signed=False, verbose=False):
     """Extreme deconvolution of VzVR velocities"""
     
     s = Sample()
@@ -2162,7 +2162,7 @@ def ellipsoid_z(test=True, dz=0.04, nmin=20, signed=False):
     
     if test:
         Npop = 1
-        Nb = 10
+        #Nb = 3
     
     np.random.seed(4091)
     
@@ -2187,8 +2187,9 @@ def ellipsoid_z(test=True, dz=0.04, nmin=20, signed=False):
     srz = 10
     szz = 100
     x0 = np.array([mur, muz, srr, szz, srz])
+    np.random.seed(90)
     
-    for i in range(Npop):
+    for i in range(1,Npop):
         #plt.close()
         ##fig, ax = plt.subplots(Nrow,Ncol, figsize=(Ncol*d, Nrow*d), sharex=True, squeeze=False)
         #plt.figure(figsize=(8,6))
@@ -2215,13 +2216,15 @@ def ellipsoid_z(test=True, dz=0.04, nmin=20, signed=False):
                 for i_ in range(N):
                     sig[i_] = np.diag(sig1[i_])
                 
+                if verbose: print(i, l, N)
+                
                 #lnl = lnlike_ellipsoid(x0, v, sig)
                 fit_ellipsoid(x0, v, sig, fout='../data/chains/ellipsoid_l{}_t{}_dz{}_l{}'.format(logg_id[i], teff[i], dz, l), nwalkers=100, nburn=500, nstep=500)
 
 def lnlike_ellipsoid(x, v, sig):
     """"""
     # prior
-    if (x[2]<0) | (x[3]<0):
+    if (x[2]<0) | (x[3]<0) | (np.any(np.abs(x)>1e4)):
         return -np.inf
     
     # likelihood
@@ -2231,7 +2234,7 @@ def lnlike_ellipsoid(x, v, sig):
         sigma = np.array([[x[2], x[4]],[x[4], x[3]]])
         
         mu_ = v - mu[np.newaxis,:]
-        sigma_ = sigma[np.newaxis,:,:] + sig
+        sigma_ = sigma[np.newaxis,:,:] + sig**2
         
         # covariance inverse + det
         inv_sigma_ = np.linalg.inv(sigma_)
@@ -2256,7 +2259,7 @@ def fit_ellipsoid(init, v, sig, fout='', nstep=400, nburn=200, nwalkers=100):
     # setup
     ndim = np.size(init)
     pos = [init + init*1e-1*np.random.randn(ndim) for i in range(nwalkers)]
-    threads = 3
+    threads = 10
     pool = multiprocessing.Pool(threads)
     sampler = emcee.EnsembleSampler(nwalkers, ndim, lnlike_ellipsoid, pool=pool, args=(v, sig))
     
@@ -2300,6 +2303,18 @@ def check_ellipsoid(logg_id=0, teff=2, dz=0.1, l=0):
     
         plt.tight_layout()
         plt.savefig('../plots/diag/chains_ellipsoid_l{}_t{}_dz{}_l{}.png'.format(logg_id, teff, dz, l))
+
+def audit_ellipsoid(logg=0, teff=2, dz=0.04, l=0):
+    """"""
+    fin = '../data/chains/ellipsoid_l{}_t{}_dz{}_l{}.npz'.format(logg, teff, dz, l)
+    if os.path.isfile(fin):
+        data = np.load(fin)
+        chain = data['chain']
+        lnp = data['lnp']
+        
+        idmax = np.argmax(lnp)
+        print(chain[idmax])
+        print(np.median(chain, axis=0))
 
 def pdf_ellipsoid(logg_id=0, teff=2, dz=0.1, l=0):
     """Plot triangle plot with samples of R,z velocity ellipsoid parameters"""
@@ -2403,7 +2418,7 @@ def vprofiles_ellipsoid(logg_id=0, teff=2, dz=0.1, signed=False):
     Nb_aux = np.size(z_bins) - 2
     
     t = Table.read('../data/profile_ell_logg{}_teff{}_z{}_s{:1d}.fits'.format(logg_id, teff, Nb_aux, signed))
-    t = t[t['z']<1.2]
+    #t = t[t['z']<1.2]
     
     keys = ['vz', 'vze', 'sz', 'sze', 'vr', 'vre', 'sr', 'sre', 'vrz', 'vrze', 'srz', 'srze']
     #for k in keys:
