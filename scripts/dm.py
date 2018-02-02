@@ -4609,6 +4609,11 @@ def full_jeans_mcmc(logg=1, teff=5, l=39, verbose=True, test=True, cont=False, s
         h = 0.25*u.kpc
         srz0 = 25*u.km/u.s
     
+    if teff<5:
+        nu0 = 1e7*u.kpc**-3
+        h = 0.1*u.kpc
+        srz0 = 10*u.km/u.s
+    
     A = 15.3*u.km*u.s**-1*u.kpc**-1
     B = -11.9*u.km*u.s**-1*u.kpc**-1
     C = (10*u.km*u.s**-1)**2 * nu0
@@ -4755,7 +4760,9 @@ def analyze_chains(logg=1, teff=5, l=39):
     plt.ylabel('ln(p)')
 
     plt.tight_layout()
+    plt.savefig('../plots/fulljeans_chains_logg{}_teff{}_z{}_s0.png'.format(logg, teff, l))
 
+import corner
 def fulljeans_pdf(logg=1, teff=5, l=39, nstart=0):
     """Plot triangle plot with samples of R,z velocity ellipsoid parameters"""
     
@@ -4770,11 +4777,107 @@ def fulljeans_pdf(logg=1, teff=5, l=39, nstart=0):
     
     samples = trim_chain(chain, nwalkers, nstart, ndim)
     
-    labels = ['vr', 'vz', 'srr', 'szz', 'srz']
+    labels = ['$\Sigma_d$', '$h_d$', '$\\rho_{dm}$', '$A_{tilt}$', '$n_{tilt}$', '$R_{tilt}$', '$\\nu_0$', 'h', '$\sigma_{z,0}$']
     plt.close()
-    fig = triangle.corner(samples, cmap='gray', quantiles=[0.16,0.50,0.84], angle=0, plot_contours=False)
+    fig = corner.corner(samples, cmap='gray', quantiles=[0.16,0.50,0.84], angle=0, plot_contours=True, plot_datapoints=False, smooth1d=True, labels=labels, show_titles=True)
         
-    #plt.savefig('../plots/diag/pdf_ellipsoid_l{}_t{}_dz{}_l{}.png'.format(logg_id, teff, dz, l))
+    plt.savefig('../plots/fulljeans_pdf_logg{}_teff{}_z{}_s0.png'.format(logg, teff, l))
+
+def fulljeans_bestfit(logg=1, teff=5, l=39, nstart=0):
+    """Plot best-fit model after fulljeans solution obtained"""
+    
+    extension = ''
+    dname = '../data/chains/fulljeans_logg{}_teff{}_z{}_s0'.format(logg, teff, l)
+    d = np.load('{}{}.npz'.format(dname, extension))
+    chain = d['chain']
+    lnp = d['lnp']
+    
+    id_best = np.argmax(lnp)
+    x = chain[id_best]
+    #print(x)
+    
+    # data
+    t = Table.read('../data/profile_ell_logg{}_teff{}_z{}_s0.fits'.format(logg, teff, l))
+    t = t[t['z']<1]
+    t['sz'] = np.sqrt(t['sz'])
+    t['sze'] = np.sqrt(t['sze'])
+    
+    mask = (t['z']>0.2) & (t['z']<1.2)
+    tm = t[mask]
+    nue = tm['nueff']/np.sqrt(tm['n'])
+    
+    # best fit
+    z0 = 1*u.kpc
+    z = np.linspace(0,1.2,100)*u.kpc
+    
+    nuzbest = x[6]*np.exp(-z.value/x[7])
+    szbest = full_sz(z=z, sigs=x[0]*u.Msun*u.pc**-2, H=x[1]*u.kpc, rhodm=x[2]*u.Msun*u.pc**-3, D=x[3]*u.km**2*u.s**-2, n=x[4], R0=x[5]*u.kpc, nu0=x[6]*u.kpc**-3, h=x[7]*u.kpc, sz0=x[8]*u.km*u.s**-1)
+    srzbest = x[3]*(z/z0)**x[4]
+    
+    nuzbest_ = x[6]*np.exp(-tm['zeff']/x[7])
+    szbest_ = full_sz(z=tm['z']*u.kpc, sigs=x[0]*u.Msun*u.pc**-2, H=x[1]*u.kpc, rhodm=x[2]*u.Msun*u.pc**-3, D=x[3]*u.km**2*u.s**-2, n=x[4], R0=x[5]*u.kpc, nu0=x[6]*u.kpc**-3, h=x[7]*u.kpc, sz0=x[8]*u.km*u.s**-1).value
+    srzbest_ = x[3]*(tm['z']*u.kpc/z0)**x[4]
+    
+    a = 0.2
+    
+    plt.close()
+    fig, ax = plt.subplots(2,3, figsize=(15,7), gridspec_kw = {'height_ratios':[5,2]}, sharex='col', squeeze=False)
+    
+    plt.sca(ax[0][0])
+    plt.plot(t['zeff'], t['nueff'], 'ko', alpha=a)
+    plt.errorbar(t['zeff'], t['nueff'], yerr=t['nueff']/np.sqrt(t['n']), fmt='none', color='k', alpha=a)
+    plt.plot(tm['zeff'], tm['nueff'], 'ko')
+    plt.errorbar(tm['zeff'], tm['nueff'], yerr=tm['nueff']/np.sqrt(tm['n']), fmt='none', color='k')
+    plt.plot(z, nuzbest)
+    
+    plt.gca().set_yscale('log')
+    plt.ylabel('$\\nu$ (kpc$^{-3}$)')
+
+    plt.sca(ax[1][0])
+    plt.axhline(0, color='r')
+    plt.plot(tm['zeff'], tm['nueff']-nuzbest_, 'ko')
+    plt.errorbar(tm['zeff'], tm['nueff']-nuzbest_, yerr=tm['nueff']/np.sqrt(tm['n']), fmt='none', color='k')
+    plt.xlabel('Z (kpc)')
+    plt.ylabel('$\Delta$ $\\nu$')
+    
+    plt.sca(ax[0][1])
+    plt.plot(t['z'], t['sz'], 'ko', alpha=a)
+    plt.errorbar(t['z'], t['sz'], yerr=t['sze'], fmt='none', color='k', alpha=a)
+    plt.plot(tm['z'], tm['sz'], 'ko')
+    plt.errorbar(tm['z'], tm['sz'], yerr=tm['sze'], fmt='none', color='k')
+    plt.plot(z, szbest)
+    
+    #plt.xlim(0,1)
+    plt.ylim(0,50)
+    plt.ylabel('$\sigma_{z}$ (km s$^{-1}$)')
+    
+    plt.sca(ax[1][1])
+    plt.axhline(0, color='r')
+    plt.plot(tm['zeff'], tm['sz']-szbest_, 'ko')
+    plt.errorbar(tm['z'], tm['sz']-szbest_, yerr=tm['sze'], fmt='none', color='k')
+    plt.xlabel('Z (kpc)')
+    plt.ylabel('$\Delta$ $\sigma_z$')
+    
+    plt.sca(ax[0][2])
+    plt.plot(t['z'], t['srz'], 'ko', alpha=a)
+    plt.errorbar(t['z'], t['srz'], yerr=t['srze'], fmt='none', color='k', alpha=a)
+    plt.plot(tm['z'], tm['srz'], 'ko')
+    plt.errorbar(tm['z'], tm['srz'], yerr=tm['srze'], fmt='none', color='k')
+    plt.plot(z, srzbest)
+
+    plt.ylabel('$\sigma_{Rz}$ (km s$^{-1}$)')
+    plt.ylim(-400,100)
+    
+    plt.sca(ax[1][2])
+    plt.axhline(0, color='r')
+    plt.plot(tm['zeff'], tm['srz']-srzbest_, 'ko')
+    plt.errorbar(tm['z'], tm['srz']-srzbest_, yerr=tm['srze'], fmt='none', color='k')
+    plt.xlabel('Z (kpc)')
+    plt.ylabel('$\Delta$ $\sigma_{Rz}$')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/fulljeans_bestfit_logg{}_teff{}_z{}_s0.png'.format(logg, teff, l))
+
 
 
 
@@ -4803,11 +4906,13 @@ def lnlike(x, znu, nu, nue, z, sz, sze, srz, srze):
     """"""
     #sigs.value, H.value, rhodm.value, D.value, n, R0.value, nu0.value, h.value, sz0.value
     
-    if (x[0]<0) | (x[1]<0) | (x[2]<0) | (x[0]>60) | (x[1]>1) | (np.abs(x[3])>1000) | (np.abs(x[4])>5) | (x[5]<0) | (x[7]<0) | (x[8]<0):
+    if (x[0]<0) | (x[1]<0) | (x[2]<0) | (x[0]>60) | (x[1]>1) | (x[2]>0.4) | (np.abs(x[3])>1000) | (np.abs(x[4])>10) | (x[5]<0) | (x[5]>8) | (x[7]<0) | (x[8]<0):
         lnp = -np.inf
     else:
+        # prior
+        lnprior = -0.5*((0.5*x[0]/x[1] - 47)/2)**2
         chi = chi_fn(x, znu, nu, nue, z, sz, sze, srz, srze)
-        lnp = -0.5*chi
+        lnp = -0.5*chi + lnprior
     
     return lnp
 
@@ -4831,7 +4936,12 @@ def chi_nu(x, z, nu, nue):
 def chi_sigz(x, z, sz, sze):
     """"""
     sz_mod = full_sz(z=z*u.kpc, sigs=x[0]*u.Msun*u.pc**-2, H=x[1]*u.kpc, rhodm=x[2]*u.Msun*u.pc**-3, D=x[3]*u.km**2*u.s**-2, n=x[4], R0=x[5]*u.kpc, nu0=x[6]*u.kpc**-3, h=x[7]*u.kpc, sz0=x[8]*u.km*u.s**-1).value
-    chi2 = np.nansum((sz_mod - sz)**2/sze**2)
+    
+    chi2_vec = (sz_mod - sz)**2/sze**2
+    if np.sum(np.isfinite(chi2_vec))>5:
+        chi2 = np.nansum(chi2_vec)
+    else:
+        chi2 = np.inf
     
     return chi2
 
