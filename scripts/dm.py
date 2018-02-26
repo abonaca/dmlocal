@@ -2364,6 +2364,7 @@ def dataset_ellipsoid(dz=0.04, signed=False, test=False):
         feh = np.empty(Nb)
         age = np.empty(Nb)
         neff = np.zeros(Nb)
+        nue = np.zeros(Nb)
         zeff = np.zeros(Nb)
         
         vz = np.ones(Nb)*np.nan
@@ -2390,18 +2391,20 @@ def dataset_ellipsoid(dz=0.04, signed=False, test=False):
                 nz[l] = tgas['n'][l]
                 neff[l] = tgas['nu'][l]
                 zeff[l] = tgas['z'][l]
+                nue[l] = neff[l]/np.sqrt(nz[l])
                 
                 # velocity
                 vfin = '../data/chains/ellipsoid_l{}_t{}_dz{}_l{}.npz'.format(logg_id[i], teff[i], dz, l)
                 if os.path.isfile(vfin):
                     vdata = np.load(vfin)
                     samples = vdata['chain']
+                    samples[:,3] = np.sqrt(samples[:,3])
                     percentiles = np.percentile(samples, [16,50,84], axis=0)
                     for e in range(5):
                         vec_med[e][l] = percentiles[1][e]
                         vec_err[e][l] = 0.5*(percentiles[2][e] - percentiles[0][e])
         
-        t = Table([z, hz, nz, feh, age, neff, zeff, vz, vze, sz, sze, vr, vre, sr, sre, vrz, vrze, srz, srze], names=('z', 'nu', 'n', 'feh', 'age', 'nueff', 'zeff', 'vz', 'vze', 'sz', 'sze', 'vr', 'vre', 'sr', 'sre', 'vrz', 'vrze', 'srz', 'srze'))
+        t = Table([z, hz, nz, feh, age, neff, nue, zeff, vz, vze, sz, sze, vr, vre, sr, sre, vrz, vrze, srz, srze], names=('z', 'nu', 'n', 'feh', 'age', 'nueff', 'nue', 'zeff', 'vz', 'vze', 'sz', 'sze', 'vr', 'vre', 'sr', 'sre', 'vrz', 'vrze', 'srz', 'srze'))
         t.write('../data/profile_ell_logg{}_teff{}_z{}_s{:1d}.fits'.format(logg_id[i], teff[i], Nb_aux, signed), overwrite=True)
         t.pprint()
 
@@ -2446,8 +2449,8 @@ def vprofiles_ellipsoid(logg_id=0, teff=2, dz=0.1, signed=False):
     plt.sca(ax[1][0])
     #plt.plot(t['z'], t['sz'], 'k-')
     #plt.fill_between(t['z'], t['sz']-t['sze'], t['sz']+t['sze'], color='k', alpha=0.3)
-    plt.plot(t['z'], np.sqrt(t['sz']), 'k-')
-    plt.fill_between(t['z'], np.sqrt(t['sz']-t['sze']), np.sqrt(t['sz']+t['sze']), color='k', alpha=0.3)
+    plt.plot(t['z'], t['sz'], 'k-')
+    plt.fill_between(t['z'], t['sz']-t['sze'], t['sz']+t['sze'], color='k', alpha=0.3)
     plt.xlabel('Z (kpc)')
     #plt.ylabel('$\sigma^2_Z$ (km$^2$ s$^{-2}$)')
     plt.ylabel('$\sigma_Z$ (km s$^{-1}$)')
@@ -4618,6 +4621,7 @@ def full_jeans_mcmc(logg=1, teff=5, l=39, verbose=True, test=True, cont=False, s
     nu0 = 7e5*u.kpc**-3
     sz0 = 19*u.km/u.s
     srz0 = 0*u.km**2*u.s**-2
+    zmax = 1
     
     if teff==6:
         nu0 = 1e5*u.kpc**-3
@@ -4628,6 +4632,7 @@ def full_jeans_mcmc(logg=1, teff=5, l=39, verbose=True, test=True, cont=False, s
         nu0 = 1e7*u.kpc**-3
         h = 0.1*u.kpc
         srz0 = 10*u.km/u.s
+        zmax = 0.6
     
     A = 15.3*u.km*u.s**-1*u.kpc**-1
     B = -11.9*u.km*u.s**-1*u.kpc**-1
@@ -4643,7 +4648,7 @@ def full_jeans_mcmc(logg=1, teff=5, l=39, verbose=True, test=True, cont=False, s
     z0 = 1*u.kpc
     
     t = Table.read('../data/profile_ell_logg{}_teff{}_z{}_s0.fits'.format(logg, teff, l))
-    t = t[t['z']<1]
+    t = t[t['z']<zmax]
     t['sz'] = np.sqrt(t['sz'])
     t['sze'] = np.sqrt(t['sze'])
     
@@ -4656,13 +4661,160 @@ def full_jeans_mcmc(logg=1, teff=5, l=39, verbose=True, test=True, cont=False, s
     nfree = len(pinit)
     
     if test:
-        p = lnlike(pinit, tm['zeff'], tm['nueff'], nue, tm['z'], tm['sz'], tm['sze'], tm['srz'], tm['srze'])
+        p = lnlike(pinit, tm['zeff'], tm['nueff'], tm['nue'], tm['z'], tm['sz'], tm['sze'], tm['srz'], tm['srze'])
         print(p)
     else:
         dname = '../data/chains/fulljeans_logg{}_teff{}_z{}_s0'.format(logg, teff, l)
         
         pool = get_pool(mpi=mpi, threads=nth)
         sampler = emcee.EnsembleSampler(nwalkers, nfree, lnlike, pool=pool, args=[tm['zeff'], tm['nueff'], nue, tm['z'], tm['sz'], tm['sze'], tm['srz'], tm['srze']])
+        
+        if cont:
+            # initialize random state
+            pin = pickle.load(open('{}.state'.format(dname), 'rb'))
+            genstate = pin['state']
+            
+            # initialize walkers
+            res = np.load('{}.npz'.format(dname))
+            flatchain = res['chain']
+            cshape = np.shape(flatchain)
+            nstep_tot = np.int64(cshape[0]/nwalkers)
+            chain = np.transpose(flatchain.reshape(nwalkers, nstep_tot, nfree), (1,0,2))
+            flatchain = chain.reshape(nwalkers*nstep_tot, nfree)
+            
+            positions = np.arange(-nwalkers, 0, dtype=np.int64)
+            p = flatchain[positions]
+            
+        else:
+            # initialize random state
+            prng = np.random.RandomState(seeds[1])
+            genstate = np.random.get_state()
+        
+            # initialize walkers
+            np.random.seed(seeds[0])
+            p = (np.random.rand(nfree * nwalkers).reshape((nwalkers, nfree)))
+            for i in range(nfree):
+                p[:,i] = (p[:,i]-0.5)*psig[i] + pinit[i]
+        
+        # Sample
+        t1 = time.time()
+        pos, prob, state = sampler.run_mcmc(p, nstep, rstate0=genstate)
+        t2 = time.time()
+
+        # Save chains and likelihoods
+        np.savez('{}{}.npz'.format(dname, extension), lnp=sampler.flatlnprobability, chain=sampler.flatchain)
+        
+        # Save random generator state
+        rgstate = {'state': state}
+        pickle.dump(rgstate, open('{}.state{:s}'.format(dname, extension), 'wb'))
+        
+        # combine continued run
+        if cont:
+            combine_results('{}.npz'.format(dname), '{}_cont.npz'.format(dname), nwalkers)
+            shutil.copyfile(dname+'.state_cont', dname+'.state')
+
+        idmax = np.argmax(sampler.flatlnprobability)
+        if verbose:
+            print("Time: ", t2 - t1)
+            print("Best fit: ", sampler.flatchain[idmax])
+            print("Acceptance fraction: ", np.mean(sampler.acceptance_fraction))
+        
+        pbest = sampler.flatchain[idmax]
+
+        # Terminate walkers
+        if((mpi==False) & (nth>1)):
+            sampler.pool.terminate()
+        elif(mpi==True):
+            sampler.pool.close()
+
+def full_jeans_multi_mcmc(logg=[1], teff=[5], l=[39], verbose=True, test=True, cont=False, seeds=[638, 29], mpi=False, nth=4, nwalkers=100, nstep=100):
+    """"""
+    if cont:
+        extension = '_cont'
+    else:
+        extension = ''
+    
+    rhodm = 0.008*u.Msun*u.pc**-3
+    H = 0.2*u.kpc
+    sigs = 42*u.Msun*u.pc**-2
+    sigg = 13*u.Msun*u.pc**-2
+    Rsun = 8.3*u.kpc
+    R0 = 1*u.kpc
+    D = -150*u.km**2*u.s**-2
+    n = 1.2
+    z0 = 1*u.kpc
+    
+    N = len(logg)
+    logglabel = '.'.join(str(x) for x in logg)
+    tefflabel = '.'.join(str(x) for x in teff)
+    llabel = '.'.join(str(x) for x in l)
+            
+    tlist = []
+    ind_pars = []
+    ind_psig = []
+    
+    for i in range(N):
+        h = 0.275*u.kpc
+        nu0 = 7e5*u.kpc**-3
+        sz0 = 19*u.km/u.s
+        srz0 = 0*u.km**2*u.s**-2
+        zmax = 1
+        zmin = 0.2
+    
+        if teff[i]==6:
+            nu0 = 1e5*u.kpc**-3
+            h = 0.25*u.kpc
+            srz0 = 25*u.km/u.s
+    
+        if teff[i]<5:
+            nu0 = 1e7*u.kpc**-3
+            h = 0.1*u.kpc
+            srz0 = 15*u.km/u.s
+            zmax = 0.5
+            zmin = 0.1
+        
+        if teff[i]==2:
+            nu0 = 1e6*u.kpc**-3
+            zmin = 0.1
+            zmax = 0.5
+            srz0 = 15*u.km/u.s
+        
+        t = Table.read('../data/profile_ell_logg{}_teff{}_z{}_s0.fits'.format(logg[i], teff[i], l[i]))
+        t = t[t['z']<zmax]
+        mask = (t['z']>zmin) & (t['z']<1.2)
+        tm = t[mask]
+        
+        # get individually bestfit parameters
+        tind = np.load('../data/chains/fulljeans_logg{}_teff{}_z{}_s0.npz'.format(logg[i], teff[i], l[i]))
+        chain = tind['chain']
+        med = np.median(chain, axis=0)[:3]
+        med_list = med.tolist()
+        med_ind = np.median(chain, axis=0)[3:]
+        med_ind[0] = -np.abs(med_ind[0])
+        med_ind_list = med_ind.tolist()
+        
+        tlist = tlist + [tm]
+        #ind_pars = ind_pars + [D.value, n, R0.value, nu0.value, h.value, sz0.value]
+        ind_pars = ind_pars + med_ind_list
+        ind_psig = ind_psig + [20, 0.1, 0.2, 1e4, 0.1, 1]
+    
+    pinit = [sigs.value, H.value, rhodm.value] + ind_pars
+    pinit = med_list + ind_pars
+    psig = [2, 0.1, 0.002] + ind_psig
+    nfree = len(pinit)
+    njoint = 3
+    nindividual = 6
+    
+    print(pinit)
+    
+    if test:
+        p = lnlike_multi(pinit, njoint, nindividual, tlist)
+        print(p)
+    else:
+        dname = '../data/chains/fulljeans_logg{}_teff{}_z{}_s0'.format(logglabel, tefflabel, llabel)
+        
+        pool = get_pool(mpi=mpi, threads=nth)
+        sampler = emcee.EnsembleSampler(nwalkers, nfree, lnlike_multi, pool=pool, args=[njoint, nindividual, tlist])
         
         if cont:
             # initialize random state
@@ -4742,8 +4894,13 @@ def combine_results(f, fcont, nwalkers):
     np.savez(f, lnp=pflat_comb, chain=flat_comb)
 
 
-def analyze_chains(logg=1, teff=5, l=39):
+def analyze_chains(logg=1, teff=5, l=39, nwalkers=100):
     """"""
+    
+    if type(logg) is list:
+        logg = '.'.join(str(x) for x in logg)
+        teff = '.'.join(str(x) for x in teff)
+        l = '.'.join(str(x) for x in l)
     
     extension = ''
     #dname = '../data/chains/progenitor_{}'.format(name)
@@ -4752,12 +4909,11 @@ def analyze_chains(logg=1, teff=5, l=39):
     chain = d['chain']
     lnp = d['lnp']
     
-    nwalkers = 100
     nstep, ndim = np.shape(chain)
     nstep = int(nstep/nwalkers)
     
-    nx = 2
-    ny = int((ndim+2)/2)
+    nx = 3
+    ny = int((ndim+2)/nx)
     dx = 15
     dy = dx*nx/ny
     
@@ -4781,6 +4937,11 @@ import corner
 def fulljeans_pdf(logg=1, teff=5, l=39, nstart=0):
     """Plot triangle plot with samples of R,z velocity ellipsoid parameters"""
     
+    if type(logg) is list:
+        logg = '.'.join(str(x) for x in logg)
+        teff = '.'.join(str(x) for x in teff)
+        l = '.'.join(str(x) for x in l)
+    
     extension = ''
     dname = '../data/chains/fulljeans_logg{}_teff{}_z{}_s0'.format(logg, teff, l)
     d = np.load('{}{}.npz'.format(dname, extension))
@@ -4794,109 +4955,134 @@ def fulljeans_pdf(logg=1, teff=5, l=39, nstart=0):
     
     labels = ['$\Sigma_d$', '$h_d$', '$\\rho_{dm}$', '$A_{tilt}$', '$n_{tilt}$', '$R_{tilt}$', '$\\nu_0$', 'h', '$\sigma_{z,0}$']
     plt.close()
-    fig = corner.corner(samples, cmap='gray', quantiles=[0.16,0.50,0.84], angle=0, plot_contours=True, plot_datapoints=False, smooth1d=True, labels=labels, show_titles=True)
+    fig = corner.corner(samples[:,:3], cmap='gray', quantiles=[0.16,0.50,0.84], angle=0, plot_contours=True, plot_datapoints=False, smooth1d=True, labels=labels, show_titles=True, verbose=True)
         
     plt.savefig('../plots/fulljeans_pdf_logg{}_teff{}_z{}_s0.png'.format(logg, teff, l))
 
 def fulljeans_bestfit(logg=1, teff=5, l=39, nstart=0):
     """Plot best-fit model after fulljeans solution obtained"""
     
+    if type(logg) is list:
+        logglabel = '.'.join(str(x) for x in logg)
+        tefflabel = '.'.join(str(x) for x in teff)
+        llabel = '.'.join(str(x) for x in l)
+    else:
+        logglabel = logg
+        tefflabel = teff
+        llabel = l
+        logg = [logg]
+        teff = [teff]
+        l = [l]
+    
+    njoint = 3
+    nindividual = 6    
+
     extension = ''
-    dname = '../data/chains/fulljeans_logg{}_teff{}_z{}_s0'.format(logg, teff, l)
+    dname = '../data/chains/fulljeans_logg{}_teff{}_z{}_s0'.format(logglabel, tefflabel, llabel)
     d = np.load('{}{}.npz'.format(dname, extension))
     chain = d['chain']
     lnp = d['lnp']
     
     id_best = np.argmax(lnp)
-    x = chain[id_best]
-    #print(x)
+    xall = chain[id_best]
+    print(xall)
     
-    # data
-    t = Table.read('../data/profile_ell_logg{}_teff{}_z{}_s0.fits'.format(logg, teff, l))
-    t = t[t['z']<1]
-    t['sz'] = np.sqrt(t['sz'])
-    t['sze'] = np.sqrt(t['sze'])
-    
-    mask = (t['z']>0.2) & (t['z']<1.2)
-    tm = t[mask]
-    nue = tm['nueff']/np.sqrt(tm['n'])
-    
-    # best fit
-    z0 = 1*u.kpc
-    z = np.linspace(0,1.2,100)*u.kpc
-    
-    nuzbest = x[6]*np.exp(-z.value/x[7])
-    szbest = full_sz(z=z, sigs=x[0]*u.Msun*u.pc**-2, H=x[1]*u.kpc, rhodm=x[2]*u.Msun*u.pc**-3, D=x[3]*u.km**2*u.s**-2, n=x[4], R0=x[5]*u.kpc, nu0=x[6]*u.kpc**-3, h=x[7]*u.kpc, sz0=x[8]*u.km*u.s**-1)
-    srzbest = x[3]*(z/z0)**x[4]
-    
-    nuzbest_ = x[6]*np.exp(-tm['zeff']/x[7])
-    szbest_ = full_sz(z=tm['z']*u.kpc, sigs=x[0]*u.Msun*u.pc**-2, H=x[1]*u.kpc, rhodm=x[2]*u.Msun*u.pc**-3, D=x[3]*u.km**2*u.s**-2, n=x[4], R0=x[5]*u.kpc, nu0=x[6]*u.kpc**-3, h=x[7]*u.kpc, sz0=x[8]*u.km*u.s**-1).value
-    srzbest_ = x[3]*(tm['z']*u.kpc/z0)**x[4]
-    
-    a = 0.2
-    
-    plt.close()
-    fig, ax = plt.subplots(2,3, figsize=(15,7), gridspec_kw = {'height_ratios':[5,2]}, sharex='col', squeeze=False)
-    
-    plt.sca(ax[0][0])
-    plt.plot(t['zeff'], t['nueff'], 'ko', alpha=a)
-    plt.errorbar(t['zeff'], t['nueff'], yerr=t['nueff']/np.sqrt(t['n']), fmt='none', color='k', alpha=a)
-    plt.plot(tm['zeff'], tm['nueff'], 'ko')
-    plt.errorbar(tm['zeff'], tm['nueff'], yerr=tm['nueff']/np.sqrt(tm['n']), fmt='none', color='k')
-    plt.plot(z, nuzbest)
-    
-    plt.gca().set_yscale('log')
-    plt.ylabel('$\\nu$ (kpc$^{-3}$)')
+    N = len(logg)
+    for i in range(N):
+        # parameters
+        #xlist = [xall[v] for v in range(njoint)] + [xall[v] for v in range(njoint + nindividual*i, njoint + (nindividual*i+1))]
+        xlist = [xall[v] for v in range(njoint)] + [xall[v] for v in range(njoint+nindividual*i,njoint+nindividual*(i+1))]
+        x = np.array(xlist)
+        
+        # data
+        t = Table.read('../data/profile_ell_logg{}_teff{}_z{}_s0.fits'.format(logg[i], teff[i], l[i]))
+        #t = t[t['z']<1]
+        
+        zmin = 0.2
+        zmax = 1.
+        if teff[i]<5:
+            zmax = 0.5
+            zmin = 0.1
 
-    plt.sca(ax[1][0])
-    plt.axhline(0, color='r')
-    plt.plot(tm['zeff'], tm['nueff']-nuzbest_, 'ko')
-    plt.errorbar(tm['zeff'], tm['nueff']-nuzbest_, yerr=tm['nueff']/np.sqrt(tm['n']), fmt='none', color='k')
-    plt.xlabel('Z (kpc)')
-    plt.ylabel('$\Delta$ $\\nu$')
+        mask = (t['z']>zmin) & (t['z']<zmax)
+        tm = t[mask]
+        #nue = tm['nueff']/np.sqrt(tm['n'])
     
-    plt.sca(ax[0][1])
-    plt.plot(t['z'], t['sz'], 'ko', alpha=a)
-    plt.errorbar(t['z'], t['sz'], yerr=t['sze'], fmt='none', color='k', alpha=a)
-    plt.plot(tm['z'], tm['sz'], 'ko')
-    plt.errorbar(tm['z'], tm['sz'], yerr=tm['sze'], fmt='none', color='k')
-    plt.plot(z, szbest)
+        # best fit
+        z0 = 1*u.kpc
+        z = np.linspace(0,1.2,100)*u.kpc
     
-    #plt.xlim(0,1)
-    plt.ylim(0,50)
-    plt.ylabel('$\sigma_{z}$ (km s$^{-1}$)')
+        nuzbest = x[6]*np.exp(-z.value/x[7])
+        szbest = full_sz(z=z, sigs=x[0]*u.Msun*u.pc**-2, H=x[1]*u.kpc, rhodm=x[2]*u.Msun*u.pc**-3, D=x[3]*u.km**2*u.s**-2, n=x[4], R0=x[5]*u.kpc, nu0=x[6]*u.kpc**-3, h=x[7]*u.kpc, sz0=x[8]*u.km*u.s**-1)
+        srzbest = x[3]*(z/z0)**x[4]
     
-    plt.sca(ax[1][1])
-    plt.axhline(0, color='r')
-    plt.plot(tm['zeff'], tm['sz']-szbest_, 'ko')
-    plt.errorbar(tm['z'], tm['sz']-szbest_, yerr=tm['sze'], fmt='none', color='k')
-    plt.xlabel('Z (kpc)')
-    plt.ylabel('$\Delta$ $\sigma_z$')
+        nuzbest_ = x[6]*np.exp(-tm['zeff']/x[7])
+        szbest_ = full_sz(z=tm['z']*u.kpc, sigs=x[0]*u.Msun*u.pc**-2, H=x[1]*u.kpc, rhodm=x[2]*u.Msun*u.pc**-3, D=x[3]*u.km**2*u.s**-2, n=x[4], R0=x[5]*u.kpc, nu0=x[6]*u.kpc**-3, h=x[7]*u.kpc, sz0=x[8]*u.km*u.s**-1).value
+        srzbest_ = x[3]*(tm['z']*u.kpc/z0)**x[4]
     
-    plt.sca(ax[0][2])
-    plt.plot(t['z'], t['srz'], 'ko', alpha=a)
-    plt.errorbar(t['z'], t['srz'], yerr=t['srze'], fmt='none', color='k', alpha=a)
-    plt.plot(tm['z'], tm['srz'], 'ko')
-    plt.errorbar(tm['z'], tm['srz'], yerr=tm['srze'], fmt='none', color='k')
-    plt.plot(z, srzbest)
-
-    plt.ylabel('$\sigma_{Rz}$ (km s$^{-1}$)')
-    plt.ylim(-400,100)
+        a = 0.2
     
-    plt.sca(ax[1][2])
-    plt.axhline(0, color='r')
-    plt.plot(tm['zeff'], tm['srz']-srzbest_, 'ko')
-    plt.errorbar(tm['z'], tm['srz']-srzbest_, yerr=tm['srze'], fmt='none', color='k')
-    plt.xlabel('Z (kpc)')
-    plt.ylabel('$\Delta$ $\sigma_{Rz}$')
+        plt.close()
+        fig, ax = plt.subplots(2,3, figsize=(15,7), gridspec_kw = {'height_ratios':[5,2]}, sharex=True, squeeze=False)
     
-    plt.tight_layout()
-    plt.savefig('../plots/fulljeans_bestfit_logg{}_teff{}_z{}_s0.png'.format(logg, teff, l))
+        plt.sca(ax[0][0])
+        plt.plot(t['zeff'], t['nueff'], 'ko', alpha=a)
+        plt.errorbar(t['zeff'], t['nueff'], yerr=t['nue'], fmt='none', color='k', alpha=a)
+        plt.plot(tm['zeff'], tm['nueff'], 'ko')
+        plt.errorbar(tm['zeff'], tm['nueff'], yerr=tm['nue'], fmt='none', color='k')
+        plt.plot(z, nuzbest)
+    
+        plt.gca().set_yscale('log')
+        plt.ylabel('$\\nu$ (kpc$^{-3}$)')
+
+        plt.sca(ax[1][0])
+        plt.axhline(0, color='r')
+        plt.plot(tm['zeff'], tm['nueff']-nuzbest_, 'ko')
+        plt.errorbar(tm['zeff'], tm['nueff']-nuzbest_, yerr=tm['nue'], fmt='none', color='k')
+        plt.xlabel('Z (kpc)')
+        plt.ylabel('$\Delta$ $\\nu$')
+    
+        plt.sca(ax[0][1])
+        plt.plot(t['z'], t['sz'], 'ko', alpha=a)
+        plt.errorbar(t['z'], t['sz'], yerr=t['sze'], fmt='none', color='k', alpha=a)
+        plt.plot(tm['z'], tm['sz'], 'ko')
+        plt.errorbar(tm['z'], tm['sz'], yerr=tm['sze'], fmt='none', color='k')
+        plt.plot(z, szbest)
+    
+        plt.xlim(0,1.2)
+        plt.ylim(0,50)
+        plt.ylabel('$\sigma_{z}$ (km s$^{-1}$)')
+    
+        plt.sca(ax[1][1])
+        plt.axhline(0, color='r')
+        plt.plot(tm['zeff'], tm['sz']-szbest_, 'ko')
+        plt.errorbar(tm['z'], tm['sz']-szbest_, yerr=tm['sze'], fmt='none', color='k')
+        plt.xlabel('Z (kpc)')
+        plt.ylabel('$\Delta$ $\sigma_z$')
+    
+        plt.sca(ax[0][2])
+        plt.plot(t['z'], t['srz'], 'ko', alpha=a)
+        plt.errorbar(t['z'], t['srz'], yerr=t['srze'], fmt='none', color='k', alpha=a)
+        plt.plot(tm['z'], tm['srz'], 'ko')
+        plt.errorbar(tm['z'], tm['srz'], yerr=tm['srze'], fmt='none', color='k')
+        plt.plot(z, srzbest)
+
+        plt.ylabel('$\sigma_{Rz}$ (km s$^{-1}$)')
+        plt.ylim(-400,100)
+    
+        plt.sca(ax[1][2])
+        plt.axhline(0, color='r')
+        plt.plot(tm['zeff'], tm['srz']-srzbest_, 'ko')
+        plt.errorbar(tm['z'], tm['srz']-srzbest_, yerr=tm['srze'], fmt='none', color='k')
+        plt.xlabel('Z (kpc)')
+        plt.ylabel('$\Delta$ $\sigma_{Rz}$')
+    
+        plt.tight_layout()
+        plt.savefig('../plots/fulljeans_bestfit_logg{}_teff{}_z{}_s0_t{}.png'.format(logglabel, tefflabel, llabel, i))
 
 
-
-
-
+##############
+# likelihood
 
 def full_sz(z=np.nan, A=15.3*u.km*u.s**-1*u.kpc**-1, B=-11.9*u.km*u.s**-1*u.kpc**-1, sigg=13.2*u.Msun*u.pc**-2, Rsun=8.3*u.kpc, z0=1*u.kpc, sigs=12*u.Msun*u.pc**-2, H=0.2*u.kpc, rhodm=0.01*u.Msun*u.pc**-3, D=324*u.km**2*u.s**-2, n=1.16, R0=1*u.kpc, nu0=1e6*u.kpc**-3, h=0.3*u.kpc, sz0=10*u.km*u.s**-1):
     """"""
@@ -4917,15 +5103,33 @@ def full_sz(z=np.nan, A=15.3*u.km*u.s**-1*u.kpc**-1, B=-11.9*u.km*u.s**-1*u.kpc*
     
     return sz
 
+def lnlike_multi(x, njoint, nindividual, l):
+    """"""
+    
+    if type(l) is not list:
+        l = [l]
+    
+    N = len(l)
+    
+    p = 0
+    for i in range(N):
+        x_i = [x[v] for v in range(njoint)] + [x[v] for v in range(njoint+nindividual*i,njoint+nindividual*(i+1))]
+        p_i = lnlike(x_i, l[i]['zeff'], l[i]['nueff'], l[i]['nue'], l[i]['z'], l[i]['sz'], l[i]['sze'], l[i]['srz'], l[i]['srze'])
+        p = p + p_i
+    
+    return p
+        
+
 def lnlike(x, znu, nu, nue, z, sz, sze, srz, srze):
     """"""
     #sigs.value, H.value, rhodm.value, D.value, n, R0.value, nu0.value, h.value, sz0.value
     
-    if (x[0]<0) | (x[1]<0) | (x[2]<0) | (x[0]>60) | (x[1]>1) | (x[2]>0.4) | (np.abs(x[3])>1000) | (np.abs(x[4])>10) | (x[5]<0) | (x[5]>8) | (x[7]<0) | (x[8]<0):
+    if (x[0]<0) | (x[1]<0) | (x[2]<0) | (x[0]>60) | (x[1]>1) | (x[2]>0.4) | (np.abs(x[3])>1000) | (x[3]>0) | (np.abs(x[4])>10) | (x[5]<0) | (x[5]>8) | (x[7]<0) | (x[8]<0):
         lnp = -np.inf
     else:
         # prior
         lnprior = -0.5*((0.5*x[0]/x[1] - 47)/2)**2
+        #lnprior = 0
         chi = chi_fn(x, znu, nu, nue, z, sz, sze, srz, srze)
         lnp = -0.5*chi + lnprior
     
@@ -4937,7 +5141,7 @@ def chi_fn(x, znu, nu, nue, z, sz, sze, srz, srze):
     chi += chi_nu(x, znu, nu, nue)
     chi += chi_sigz(x, z, sz, sze)
     chi += chi_sigrz(x, z, srz, srze)
-    
+        
     return chi
 
 def chi_nu(x, z, nu, nue):
