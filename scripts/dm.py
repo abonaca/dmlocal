@@ -17,17 +17,31 @@ import scipy.optimize
 from scipy.special import gamma, hyp2f1
 from scipy.integrate import quad
 import gaia_tools.select
+import gaia_tools.xmatch
 import healpy as hp
 import mwdust
+from astroML.density_estimation import XDGMM
 
 import imp
 triangle = imp.load_source('triangle', '../../python/triangle.py/triangle.py')
+import corner
 
 import myutils
 import multiprocessing
 import emcee
 import os.path
 import time
+import shutil
+
+import multiprocessing
+from multiprocessing import Pool, cpu_count
+from multiprocessing.pool import ApplyResult
+
+from types import MethodType
+import copy_reg
+import types
+
+import pickle
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -784,7 +798,6 @@ def sigmaz(h, z, sigs=41*u.Msun*u.pc**-2, H=0.2*u.kpc, sigg=13.2*u.Msun*u.pc**-2
     return sigma
 
 
-from astroML.density_estimation import XDGMM
 
 def vz_xd(signed=False, dz=0.04, full=False, test=False):
     """Extreme deconvolution of Vz velocities"""
@@ -2475,6 +2488,86 @@ def vprofiles_ellipsoid(logg_id=0, teff=2, dz=0.1, signed=False):
     plt.savefig('../plots/velocity_ellipsoid_logg{}_teff{}_z{}_s{:1d}.png'.format(logg_id, teff, Nb_aux, signed))
 
 
+def show_ellipsoid(dz=0.04, signed=False, l=10):
+    """"""
+    s = Sample()
+    sfok = s.cf>0
+    
+    if signed:
+        z_bins = np.arange(-4, 4+dz, dz)
+    else:
+        z_bins = np.arange(0, 4+dz, dz)
+        s.x[:,2] = np.abs(s.x[:,2])
+
+    z = myutils.bincen(z_bins)
+    Nb = np.size(z)
+    Nb_aux = np.size(z_bins) - 2
+    
+    logg = s.dwarf
+    logg_id = 0
+    teff = 3
+    #l = 2
+    
+    # get best-fit parameters
+    t = Table.read('../data/profile_ell_logg{}_teff{}_z{}_s{:1d}.fits'.format(logg_id, teff, Nb_aux, signed))
+    t = t[l]
+    
+    print(t.colnames)
+    cx_2d = np.array([[t['sr'], t['srz']], [t['srz'], t['sz']]])
+    print(cx_2d)
+    w, v = np.linalg.eig(cx_2d)
+    
+    # cylindrical coordinates
+    vz = s.v[:,2].value
+    
+    vx = s.v[:,0].value
+    vy = s.v[:,1].value
+    thx = np.arctan2(s.x[:,1].value, s.x[:,0].value)
+    thv = np.arctan2(s.v[:,1].value, s.v[:,0].value)
+    vr = np.sqrt(vx**2 + vy**2) * np.cos(thx+thv)
+    
+    vxe = s.verr[:,0]
+    vye = s.verr[:,1]
+    vze = s.verr[:,2]
+    vre = np.sqrt((vx[0]*vxe/vr[0])**2 + (vy[0]*vye/vr[0])**2) * np.cos(thx+thv)**2
+    
+    # select the closest bin for A dwarfs
+    psel = logg & s.spectype[teff] & (s.verr[:,2]<20)
+    hz, be = np.histogram(s.x[:,2][psel].value, bins=z_bins, weights=s.cf[psel])
+    nz, be = np.histogram(s.x[:,2][psel].value, bins=z_bins)
+    idx  = np.digitize(s.x[:,2][psel].value, bins=z_bins)
+    
+    zsel = idx==l+1
+    vz_ = vz[psel][zsel]
+    vr_ = vr[psel][zsel]
+    
+    vze_ = vze[psel][zsel]
+    vre_ = vre[psel][zsel]
+    
+    alpha = 0.2
+    
+    plt.close()
+    plt.figure()
+    
+    plt.plot(vr_, vz_, 'ko', ms=4, alpha=alpha, zorder=0)
+    plt.errorbar(vr_, vz_, xerr=vre_, yerr=vze_, fmt='none', color='k', alpha=alpha, zorder=0)
+    
+    if np.all(np.isreal(v)):
+        theta = np.degrees(np.arctan2(v[1][0], v[0][0]))
+        width = np.sqrt(w[0])*2
+        height = np.sqrt(w[1])*2
+        print(width, height, theta)
+        
+        e = mpl.patches.Ellipse((t['vr'],t['vz']), width=width, height=height, angle=theta, fc='none', ec='r', alpha=1, lw=3, zorder=1)
+        plt.gca().add_patch(e)
+    
+    plt.xlim(-100,100)
+    plt.ylim(-100,100)
+    plt.xlabel('$V_R$ (km s$^{-1}$)')
+    plt.ylabel('$V_Z$ (km s$^{-1}$)')
+    
+    plt.tight_layout()
+
 #########
 # Fitting
 
@@ -2769,15 +2862,6 @@ class Tracer(New):
     def integral_sech2tanh(self, H, h, z):
         return quad(self.integrand_sech2tanh, z/(2*h), np.inf, args=(H, h))[0]
 
-import multiprocessing
-from multiprocessing import Pool, cpu_count
-from multiprocessing.pool import ApplyResult
-
-from types import MethodType
-import copy_reg
-import types
-
-import pickle
 
 def _pickle_method(method):
     func_name = method.im_func.__name__
@@ -4232,7 +4316,6 @@ def test_jeans_2side(logg=0, teff=2, l=79, Nboot=1, alpha=1):
     plt.savefig('../plots/jeans_test_logg{}_teff{}_z{}_s1_boot{}.png'.format(logg, teff, l, Nboot))
 
 # north sky
-import gaia_tools.xmatch
 
 def match_lamost():
     """"""
@@ -4608,7 +4691,6 @@ def get_pool(mpi=False, threads=None, verbose=False):
     
     return pool
 
-import shutil
 
 def full_jeans_mcmc(logg=1, teff=5, l=39, verbose=True, test=True, cont=False, seeds=[638, 29], mpi=False, nth=4, nwalkers=100, nstep=100):
     """"""
@@ -4933,8 +5015,7 @@ def analyze_chains(logg=1, teff=5, l=39, nwalkers=100):
     plt.tight_layout()
     plt.savefig('../plots/fulljeans_chains_logg{}_teff{}_z{}_s0.png'.format(logg, teff, l))
 
-import corner
-def fulljeans_pdf(logg=1, teff=5, l=39, nstart=0):
+def fulljeans_pdf(logg=1, teff=5, l=39, nstart=0, nwalkers=100):
     """Plot triangle plot with samples of R,z velocity ellipsoid parameters"""
     
     if type(logg) is list:
@@ -4947,7 +5028,6 @@ def fulljeans_pdf(logg=1, teff=5, l=39, nstart=0):
     d = np.load('{}{}.npz'.format(dname, extension))
     chain = d['chain']
     
-    nwalkers = 100
     nstep, ndim = np.shape(chain)
     nstep = int(nstep/nwalkers)
     
@@ -4955,9 +5035,10 @@ def fulljeans_pdf(logg=1, teff=5, l=39, nstart=0):
     
     labels = ['$\Sigma_d$', '$h_d$', '$\\rho_{dm}$', '$A_{tilt}$', '$n_{tilt}$', '$R_{tilt}$', '$\\nu_0$', 'h', '$\sigma_{z,0}$']
     plt.close()
-    fig = corner.corner(samples[:,:3], cmap='gray', quantiles=[0.16,0.50,0.84], angle=0, plot_contours=True, plot_datapoints=False, smooth1d=True, labels=labels, show_titles=True, verbose=True)
+    fig = corner.corner(samples[:,:3], cmap='gray', quantiles=[0.16,0.50,0.84], angle=0, plot_contours=True, plot_datapoints=False, smooth1d=True, labels=labels, show_titles=True, verbose=True, bins=50, title_fmt='.3f')
         
     plt.savefig('../plots/fulljeans_pdf_logg{}_teff{}_z{}_s0.png'.format(logg, teff, l))
+    plt.savefig('../tex/fulljeans_pdf_logg{}_teff{}_z{}_s0.pdf'.format(logg, teff, l))
 
 def fulljeans_bestfit(logg=1, teff=5, l=39, nstart=0):
     """Plot best-fit model after fulljeans solution obtained"""
@@ -5079,6 +5160,7 @@ def fulljeans_bestfit(logg=1, teff=5, l=39, nstart=0):
     
         plt.tight_layout()
         plt.savefig('../plots/fulljeans_bestfit_logg{}_teff{}_z{}_s0_t{}.png'.format(logglabel, tefflabel, llabel, i))
+        plt.savefig('../tex/fulljeans_bestfit_t{}.pdf'.format(i))
 
 
 ##############
