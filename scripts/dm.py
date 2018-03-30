@@ -2191,18 +2191,12 @@ def ellipsoid_z(test=True, dz=0.04, nmin=20, signed=False, verbose=False):
     vxe = s.verr[:,0]
     vye = s.verr[:,1]
     vze = s.verr[:,2]
-    vre = np.sqrt((vx[0]*vxe/vr[0])**2 + (vy[0]*vye/vr[0])**2) * np.cos(thx+thv)**2
+    vre = np.sqrt((vx*vxe/vr)**2 + (vy*vye/vr)**2) * np.abs(np.cos(thx+thv))
     
     # initial parameters
-    mur = 10
-    muz = 10
-    srr = 100
-    srz = 10
-    szz = 100
-    x0 = np.array([mur, muz, srr, szz, srz])
     np.random.seed(90)
     
-    for i in range(1,Npop):
+    for i in range(3,Npop):
         #plt.close()
         ##fig, ax = plt.subplots(Nrow,Ncol, figsize=(Ncol*d, Nrow*d), sharex=True, squeeze=False)
         #plt.figure(figsize=(8,6))
@@ -2229,39 +2223,39 @@ def ellipsoid_z(test=True, dz=0.04, nmin=20, signed=False, verbose=False):
                 for i_ in range(N):
                     sig[i_] = np.diag(sig1[i_])
                 
-                if verbose: print(i, l, N)
+                x0 = np.array([np.mean(vr_), np.mean(vz_), np.std(vr_)**2, np.std(vz_)**2,  0.1*np.sqrt(np.std(vr_)**2*np.std(vz_)**2)])
+                if verbose: print(i, l, N, x0)
                 
                 #lnl = lnlike_ellipsoid(x0, v, sig)
-                fit_ellipsoid(x0, v, sig, fout='../data/chains/ellipsoid_l{}_t{}_dz{}_l{}'.format(logg_id[i], teff[i], dz, l), nwalkers=100, nburn=500, nstep=500)
+                fit_ellipsoid(x0, v, sig, fout='../data/chains/ellipsoid2_l{}_t{}_dz{}_l{}'.format(logg_id[i], teff[i], dz, l), nwalkers=100, nburn=100, nstep=500)
 
 def lnlike_ellipsoid(x, v, sig):
     """"""
+    # populate gaussian vectors
+    mu = np.array([x[0],x[1]])
+    sigma = np.array([[x[2], x[4]],[x[4], x[3]]])
+    
+    mu_ = v - mu[np.newaxis,:]
+    sigma_ = sigma[np.newaxis,:,:] + sig**2
+    
+    # covariance det
+    det = np.linalg.det(sigma_)
+    
     # prior
-    if (x[2]<0) | (x[3]<0) | (np.any(np.abs(x)>1e4)):
+    if (x[2]<0) | (x[3]<0) | (np.any(np.abs(x[2:4])>3e4)) | (np.abs(x[4])>3e4) | (np.any(np.abs(x[:2])>100)) | np.any(det<0):
         return -np.inf
     
     # likelihood
     else:
-        # populate gaussian vectors
-        mu = np.array([x[0],x[1]])
-        sigma = np.array([[x[2], x[4]],[x[4], x[3]]])
-        
-        mu_ = v - mu[np.newaxis,:]
-        sigma_ = sigma[np.newaxis,:,:] + sig**2
-        
-        # covariance inverse + det
+        # covariance inverse
         inv_sigma_ = np.linalg.inv(sigma_)
-        det = np.linalg.det(sigma_)
-        
-        #print(inv_sigma_)
-        #print(det)
         
         # calculate chi2
         aux = np.einsum('ijk,ik->ij', inv_sigma_, mu_)
         prod = np.einsum('ij,ij->i', aux, mu_)
         
         # sum over all stars
-        lj = -0.5*prod - 2*np.pi - 0.5*np.log(np.abs(det))
+        lj = -0.5*prod -0.5*np.log(np.abs(2*np.pi*det))
         lnl = np.sum(lj)
         
         return lnl
@@ -2271,8 +2265,14 @@ def fit_ellipsoid(init, v, sig, fout='', nstep=400, nburn=200, nwalkers=100):
     
     # setup
     ndim = np.size(init)
-    pos = [init + init*1e-1*np.random.randn(ndim) for i in range(nwalkers)]
+    #pos = [init + init*0.1*(-0.5 + np.random.rand(ndim)) for i in range(nwalkers)]
+    pos = np.random.rand(ndim * nwalkers).reshape((nwalkers, ndim))*0.2*init[np.newaxis,:] + init[np.newaxis,:]
     threads = 10
+    
+    #for i in range(2):
+        #lnlike = lnlike_ellipsoid(pos[i], v, sig)
+        #print(lnlike, pos[i])
+
     pool = multiprocessing.Pool(threads)
     sampler = emcee.EnsembleSampler(nwalkers, ndim, lnlike_ellipsoid, pool=pool, args=(v, sig))
     
@@ -2284,18 +2284,20 @@ def fit_ellipsoid(init, v, sig, fout='', nstep=400, nburn=200, nwalkers=100):
     # save
     np.savez(fout, lnp=sampler.flatlnprobability, chain=sampler.flatchain)
     
+    print('Mean acceptance fraction: {0:.3f}'.format(np.mean(sampler.acceptance_fraction)))
+    
     pool.close()
 
 def check_ellipsoid(logg_id=0, teff=2, dz=0.1, l=0):
     """Plot chains for fitting R,z velocity ellipsoid"""
     
-    fin = '../data/chains/ellipsoid_l{}_t{}_dz{}_l{}.npz'.format(logg_id, teff, dz, l)
+    fin = '../data/chains/ellipsoid2_l{}_t{}_dz{}_l{}.npz'.format(logg_id, teff, dz, l)
     if os.path.isfile(fin):
         data = np.load(fin)
         chain = data['chain']
         lnp = data['lnp']
-    
-        nstep = 400
+        
+        nstep = 500
         step = np.arange(nstep)
         labels = ['vr', 'vz', 'srr', 'szz', 'srz']
     
@@ -2332,13 +2334,13 @@ def audit_ellipsoid(logg=0, teff=2, dz=0.04, l=0):
 def pdf_ellipsoid(logg_id=0, teff=2, dz=0.1, l=0):
     """Plot triangle plot with samples of R,z velocity ellipsoid parameters"""
     
-    fin = '../data/chains/ellipsoid_l{}_t{}_dz{}_l{}.npz'.format(logg_id, teff, dz, l)
+    fin = '../data/chains/ellipsoid2_l{}_t{}_dz{}_l{}.npz'.format(logg_id, teff, dz, l)
     if os.path.isfile(fin):
         data = np.load(fin)
         samples = data['chain']
         labels = ['vr', 'vz', 'srr', 'szz', 'srz']
         plt.close()
-        fig = triangle.corner(samples, labels=labels, cmap='gray', quantiles=[0.16,0.50,0.84], angle=0, plot_contours=False)
+        fig = corner.corner(samples, labels=labels, cmap='gray', quantiles=[0.16,0.50,0.84], angle=0, plot_contours=True, plot_datapoints=False, bins=30)
         
         plt.savefig('../plots/diag/pdf_ellipsoid_l{}_t{}_dz{}_l{}.png'.format(logg_id, teff, dz, l))
 
@@ -2407,7 +2409,7 @@ def dataset_ellipsoid(dz=0.04, signed=False, test=False):
                 nue[l] = neff[l]/np.sqrt(nz[l])
                 
                 # velocity
-                vfin = '../data/chains/ellipsoid_l{}_t{}_dz{}_l{}.npz'.format(logg_id[i], teff[i], dz, l)
+                vfin = '../data/chains/ellipsoid2_l{}_t{}_dz{}_l{}.npz'.format(logg_id[i], teff[i], dz, l)
                 if os.path.isfile(vfin):
                     vdata = np.load(vfin)
                     samples = vdata['chain']
